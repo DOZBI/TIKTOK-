@@ -98,10 +98,11 @@ export const useVideoStore = create<VideoState>((set, get) => ({
     const { data } = await supabase.auth.getSession();
     set({ isLoggedIn: Boolean(data.session) });
     await get().loadFeed();
-    supabase.auth.onAuthStateChange((_event, session) => {
+    supabase.auth.onAuthStateChange((event, session) => {
       set({ isLoggedIn: Boolean(session) });
-      if (session) void get().loadFeed();
-      else set({ videos: [] });
+      if (event === 'SIGNED_IN' || event === 'SIGNED_OUT') {
+        setTimeout(() => void get().loadFeed(), 0);
+      }
     });
   },
   loadFeed: async () => {
@@ -167,9 +168,12 @@ export const useVideoStore = create<VideoState>((set, get) => ({
   },
   incrementView: async (id) => {
     const video = get().videos.find((item) => item.id === id);
-    if (!video) return;
-    set((state) => ({ videos: state.videos.map((item) => item.id === id ? { ...item, views: item.views + 1 } : item) }));
-    await supabase?.from('videos').update({ views_count: video.views + 1 }).eq('id', id);
+    if (!video || !supabase) return;
+    const { data: views, error } = await supabase.rpc('increment_video_view', { video_id_input: id });
+    if (error || typeof views !== 'number') {
+      return;
+    }
+    set((state) => ({ videos: state.videos.map((item) => item.id === id ? { ...item, views: Math.max(item.views, views) } : item) }));
   },
   setShowAuthModal: (show) => set({ showAuthModal: show }),
   currentUser: {

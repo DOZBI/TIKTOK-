@@ -10,12 +10,8 @@ const { height } = Dimensions.get('window');
 export default function VideoDetailScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const router = useRouter();
-  const { videos, incrementView } = useVideoStore();
+  const { videos } = useVideoStore();
   const [activeId, setActiveId] = useState<string>(id || '');
-
-  useEffect(() => {
-    if (id) void incrementView(id);
-  }, [id, incrementView]);
 
   const viewabilityConfig = useRef({ itemVisiblePercentThreshold: 60 }).current;
   const onViewableItemsChanged = useRef(({ viewableItems }: any) => {

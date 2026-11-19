@@ -1,16 +1,17 @@
 import React, { useState, useRef, useEffect, useCallback, useMemo } from 'react';
 import { FlatList, View, Text, StatusBar, TouchableOpacity, AppState, useWindowDimensions, LayoutChangeEvent, ActivityIndicator, Image, NativeSyntheticEvent, NativeScrollEvent } from 'react-native';
-import { useFocusEffect } from 'expo-router';
+import { useFocusEffect, useRouter } from 'expo-router';
 import { useVideoStore } from '../../store/useVideoStore';
 import VideoPost from '../../components/VideoPost';
 import LiveStreamModal from '../../components/LiveStreamModal';
 import { pauseAll } from '../../lib/playbackManager';
-import { Users, Sparkles, Tv } from 'lucide-react-native';
+import { Users, Sparkles, Tv, Shield } from 'lucide-react-native';
 
 const TAB_BAR_HEIGHT = 60;
 const PREFETCH_POSTERS = 3;
 
 export default function HomeFeed() {
+  const router = useRouter();
   const videos = useVideoStore((state) => state.videos);
   const hiddenVideoIds = useVideoStore((state) => state.hiddenVideoIds);
   const isFeedLoading = useVideoStore((state) => state.isFeedLoading);
@@ -122,6 +123,16 @@ export default function HomeFeed() {
         <Text className="text-white text-[9px] font-extrabold tracking-widest uppercase ml-1">LIVE</Text>
       </TouchableOpacity>
 
+      <TouchableOpacity
+        onPress={() => router.push('/privacy')}
+        className="absolute top-12 right-4 z-20 flex-row items-center rounded-full bg-black/50 px-2.5 py-1"
+        accessibilityRole="button"
+        accessibilityLabel="Informations de confidentialité"
+      >
+        <Shield size={13} color="#a1a1aa" />
+        <Text className="text-zinc-400 text-[9px] ml-1">Confidentialité</Text>
+      </TouchableOpacity>
+
       <View className="absolute top-12 left-0 right-0 z-10 flex-row justify-center items-center gap-x-6" pointerEvents="box-none">
         <TouchableOpacity onPress={() => setFeedType('following')} className="items-center py-1">
           <Text className={`text-sm font-bold ${feedType === 'following' ? 'text-white text-[15px]' : 'text-zinc-400'}`}>
@@ -189,7 +200,9 @@ export default function HomeFeed() {
           showsVerticalScrollIndicator={false}
           onScroll={onScroll}
           scrollEventThrottle={16}
-          pagingEnabled
+          snapToInterval={itemHeight}
+          snapToAlignment="start"
+          disableIntervalMomentum
           decelerationRate="fast"
           initialNumToRender={2}
           maxToRenderPerBatch={2}

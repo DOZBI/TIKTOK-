@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { View, Text, StyleSheet, Image, Dimensions, TouchableOpacity, Pressable, Modal, ScrollView, TextInput, Alert, ActivityIndicator, LayoutChangeEvent } from 'react-native';
-import { Heart, MessageCircle, Share2, Plus, Music, Send, X, Bookmark, EyeOff, AlertTriangle, Download, Columns, Camera, Send as DirectMessageIcon } from 'lucide-react-native';
+import { Heart, MessageCircle, Share2, Plus, Music, Send, X, Bookmark, Eye, EyeOff, AlertTriangle, Download, Columns, Camera, Send as DirectMessageIcon } from 'lucide-react-native';
 import Animated, { useSharedValue, useAnimatedStyle, withRepeat, withTiming, Easing, cancelAnimation, runOnJS } from 'react-native-reanimated';
 import { Gesture, GestureDetector } from 'react-native-gesture-handler';
 import * as Haptics from 'expo-haptics';
@@ -63,6 +63,7 @@ function VideoPost({ video, isActive, height, shouldPreload = false }: VideoPost
   const replyToComment = useVideoStore((state) => state.replyToComment);
   const isLoggedIn = useVideoStore((state) => state.isLoggedIn);
   const setShowAuthModal = useVideoStore((state) => state.setShowAuthModal);
+  const incrementView = useVideoStore((state) => state.incrementView);
   const [showComments, setShowComments] = useState(false);
   const [showOptions, setShowOptions] = useState(false);
   const [isProfileVisible, setIsProfileVisible] = useState(false);
@@ -78,6 +79,7 @@ function VideoPost({ video, isActive, height, shouldPreload = false }: VideoPost
   const [duration, setDuration] = useState(0);
   const seekbarWidth = useRef(width - 32 - 70);
   const downloadTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const countedViewForVideo = useRef<string | null>(null);
 
   const rotateDisk = useSharedValue(0);
   const waveScale = useSharedValue(1);
@@ -97,6 +99,12 @@ function VideoPost({ video, isActive, height, shouldPreload = false }: VideoPost
 
   const shouldPlay =
     isActive && !showComments && !showOptions && !isDownloading && !isProfileVisible && !isSoundVisible && !isDuetActive;
+
+  useEffect(() => {
+    if (!isActive || countedViewForVideo.current === video.id) return;
+    countedViewForVideo.current = video.id;
+    void incrementView(video.id);
+  }, [incrementView, isActive, video.id]);
 
   useEffect(() => {
     return () => {
@@ -383,6 +391,11 @@ function VideoPost({ video, isActive, height, shouldPreload = false }: VideoPost
         <Text className="text-gray-100 text-sm mb-3" numberOfLines={3}>
           {video.description}
         </Text>
+
+        <View className="flex-row items-center mb-3">
+          <Eye size={13} color="#a1a1aa" />
+          <Text className="text-zinc-400 text-[11px] ml-1.5">{video.views.toLocaleString('fr-FR')} vues</Text>
+        </View>
 
         <TouchableOpacity onPress={() => setIsSoundVisible(true)} className="flex-row items-center">
           <Music size={14} color="#ffffff" />

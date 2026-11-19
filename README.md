@@ -90,3 +90,16 @@ L’export statique Expo v56 est configuré pour être publié depuis `dist/`.
 4. Si l’application doit se connecter à Supabase, ajoutez `EXPO_PUBLIC_SUPABASE_URL` et `EXPO_PUBLIC_SUPABASE_ANON_KEY` dans **Site configuration > Environment variables**, puis relancez le déploiement. Ces variables sont intégrées au bundle web : utilisez uniquement la clé publique anon/publishable, avec les règles RLS activées. N’ajoutez jamais de clé `service_role`.
 
 Pour générer le site localement, lancez `npm run build:web`. Le résultat est écrit dans `dist/`.
+
+## Administration, vues et visiteurs
+
+Les visiteurs peuvent regarder les vidéos publiques sans compte. Les vues sont incrémentées par une fonction SQL atomique et affichées sur chaque vidéo.
+
+Pour activer l’administration et les statistiques après déploiement :
+
+1. Exécutez `supabase/migrations/0004_admin_analytics.sql` dans le SQL Editor du projet Supabase.
+2. Connectez-vous au compte qui doit être administrateur, puis copiez son UUID depuis **Supabase > Authentication > Users**.
+3. Dans les variables Netlify, avec la portée **Functions**, définissez `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY` (ou `SUPABASE_SECRET_KEY`), `ADMIN_USER_IDS` et `VISITOR_HASH_SECRET`. `ADMIN_USER_IDS` accepte un ou plusieurs UUID séparés par des virgules. Utilisez une valeur aléatoire longue pour le secret HMAC.
+4. Redéployez le site, connectez-vous avec le compte autorisé et ouvrez `/admin`.
+
+La clé privilégiée Supabase est utilisée uniquement dans les Netlify Functions, jamais dans le bundle web. Le compteur de visiteurs conserve un HMAC de l’adresse IP, pas l’adresse brute. Il compte des IP uniques, ce qui ne correspond pas exactement au nombre de personnes. L’administration liste les comptes et les vidéos par pages, permet leur suppression et affiche les vues.

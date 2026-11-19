@@ -10,8 +10,12 @@ const { height } = Dimensions.get('window');
 export default function VideoDetailScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const router = useRouter();
-  const { videos } = useVideoStore();
+  const { videos, incrementView } = useVideoStore();
   const [activeId, setActiveId] = useState<string>(id || '');
+
+  useEffect(() => {
+    if (id) void incrementView(id);
+  }, [id, incrementView]);
 
   const viewabilityConfig = useRef({ itemVisiblePercentThreshold: 60 }).current;
   const onViewableItemsChanged = useRef(({ viewableItems }: any) => {
@@ -33,6 +37,8 @@ export default function VideoDetailScreen() {
         setFeedVideos(reordered);
         setActiveId(id);
       }
+    } else {
+      setFeedVideos(videos);
     }
   }, [id, videos]);
 
@@ -52,9 +58,13 @@ export default function VideoDetailScreen() {
         data={feedVideos}
         keyExtractor={(item) => item.id}
         renderItem={({ item }) => (
-          <VideoPost video={item} isActive={item.id === activeId} />
+          <VideoPost video={item} height={height} isActive={item.id === activeId} />
         )}
         pagingEnabled
+        initialNumToRender={2}
+        maxToRenderPerBatch={2}
+        windowSize={3}
+        removeClippedSubviews={false}
         showsVerticalScrollIndicator={false}
         onViewableItemsChanged={onViewableItemsChanged}
         viewabilityConfig={viewabilityConfig}

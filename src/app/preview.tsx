@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { View, Text, TouchableOpacity, TextInput, Image, Dimensions, KeyboardAvoidingView, Platform, Alert } from 'react-native';
+import { View, Text, TouchableOpacity, TextInput, Image, Dimensions, KeyboardAvoidingView, Platform, Alert, ActivityIndicator } from 'react-native';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useVideoPlayer, VideoView } from 'expo-video';
 import { ChevronLeft, Type, Image as ImageIcon, Music, Send, Globe, Lock, Users } from 'lucide-react-native';
@@ -15,7 +15,7 @@ export default function PreviewScreen() {
   const { uri, filter, sound } = useLocalSearchParams<{ uri: string; filter: string; sound: string }>();
   const router = useRouter();
   const insets = useSafeAreaInsets();
-  const { addVideo } = useVideoStore();
+  const { addVideo, isLoggedIn, setShowAuthModal } = useVideoStore();
 
   const [step, setStep] = useState<'preview' | 'post'>('preview');
   
@@ -28,6 +28,8 @@ export default function PreviewScreen() {
   const [description, setDescription] = useState('');
   const [privacy, setPrivacy] = useState<'Everyone' | 'Friends' | 'Only Me'>('Everyone');
   const [showPrivacyOptions, setShowPrivacyOptions] = useState(false);
+  const [isPublishing, setIsPublishing] = useState(false);
+  const [publishProgress, setPublishProgress] = useState(0);
 
   const player = useVideoPlayer(uri, (playerInstance) => {
     playerInstance.loop = true;
@@ -43,16 +45,31 @@ export default function PreviewScreen() {
     setIsAddingText(false);
   };
 
-  const handlePost = () => {
-    Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-    
-    // Add to feed store
-    addVideo({
+  const handlePost = async () => {
+    if (isPublishing) return;
+    if (!isLoggedIn) {
+      setShowAuthModal(true);
+      return;
+    }
+
+    setIsPublishing(true);
+    setPublishProgress(1);
+
+    const privacyMap = { Everyone: 'public', Friends: 'followers', 'Only Me': 'private' } as const;
+    const result = await addVideo({
       videoUrl: uri,
       description: description || `My new video using ${filter || 'Normal'} filter! 🎥✨`,
       music: sound || 'Original Audio - you_clone',
-    });
+    }, privacyMap[privacy], setPublishProgress);
 
+    if (result.error) {
+      setIsPublishing(false);
+      setPublishProgress(0);
+      Alert.alert('Publication impossible', result.error);
+      return;
+    }
+
+    Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
     Alert.alert(
       'Video Uploaded',
       'Your video has been published successfully.',
@@ -142,10 +159,21 @@ export default function PreviewScreen() {
               <Text className="text-white font-bold text-[15px]">Drafts</Text>
             </TouchableOpacity>
             
-            <TouchableOpacity onPress={handlePost} className="bg-[#ff0050] py-4 rounded-xl items-center flex-row justify-center">
-              <Send size={18} color="#ffffff" className="mr-2" />
-              <Text className="text-white font-bold text-[15px]">Post</Text>
+            <TouchableOpacity
+              onPress={handlePost}
+              disabled={isPublishing}
+              className={`py-4 rounded-xl items-center flex-row justify-center ${isPublishing ? 'bg-zinc-700' : 'bg-[#ff0050]'}`}
+            >
+              {isPublishing ? <ActivityIndicator color="#ffffff" className="mr-2" /> : <Send size={18} color="#ffffff" className="mr-2" />}
+              <Text className="text-white font-bold text-[15px]">
+                {isPublishing ? `Publication ${Math.round(publishProgress)}%` : 'Post'}
+              </Text>
             </TouchableOpacity>
+            {isPublishing && (
+              <View className="h-1.5 bg-zinc-800 rounded-full overflow-hidden">
+                <View className="h-full bg-[#ff0050]" style={{ width: `${Math.max(publishProgress, 2)}%` }} />
+              </View>
+            )}
           </View>
         </View>
       </KeyboardAvoidingView>

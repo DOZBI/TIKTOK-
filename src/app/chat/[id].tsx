@@ -1,213 +1,103 @@
-import React, { useState, useEffect, useRef } from 'react';
-import { View, Text, TextInput, TouchableOpacity, ScrollView, KeyboardAvoidingView, Platform, Image } from 'react-native';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
+import { ActivityIndicator, Alert, Image, KeyboardAvoidingView, Platform, ScrollView, Text, TextInput, TouchableOpacity, View } from 'react-native';
 import { useLocalSearchParams, useRouter } from 'expo-router';
-import { ChevronLeft, Send, Video, Info, Camera, Heart } from 'lucide-react-native';
+import { ChevronLeft, Send } from 'lucide-react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { supabase } from '../../lib/supabase';
 
-interface Message {
-  id: string;
-  text: string;
-  sender: 'me' | 'other';
-  time: string;
-  type?: 'text' | 'video';
-  videoThumbnail?: string;
-  isLiked?: boolean;
-}
+type ChatMessage = { id: string; body: string; sender_id: string; created_at: string };
 
 export default function ChatScreen() {
-  const { id } = useLocalSearchParams();
+  const { id } = useLocalSearchParams<{ id: string }>();
   const router = useRouter();
   const insets = useSafeAreaInsets();
   const scrollViewRef = useRef<ScrollView>(null);
+  const [userId, setUserId] = useState('');
+  const [partner, setPartner] = useState<{ username: string; avatar_url: string | null } | null>(null);
+  const [messages, setMessages] = useState<ChatMessage[]>([]);
+  const [input, setInput] = useState('');
+  const [loading, setLoading] = useState(true);
+  const [sending, setSending] = useState(false);
+  const [error, setError] = useState('');
 
-  const [inputMessage, setInputMessage] = useState('');
-  const [messages, setMessages] = useState<Message[]>([
-    { id: '1', text: 'Hey, did you see that new dance challenge?', sender: 'other', time: '10:30 AM' },
-    { id: '2', text: 'Yes! It looks so hard though 😅', sender: 'me', time: '10:32 AM' },
-    { 
-      id: '3', 
-      text: 'Look at this one, they nailed it', 
-      sender: 'other', 
-      time: '10:35 AM',
-      type: 'video',
-      videoThumbnail: 'https://images.unsplash.com/photo-1546422904-90eab23c3d7e?q=80&w=200&auto=format&fit=crop'
-    },
-    { id: '4', text: 'Let’s film a collab this weekend!', sender: 'other', time: '10:45 AM' }
-  ]);
-  const [isTyping, setIsTyping] = useState(false);
+  const load = useCallback(async () => {
+    if (!supabase || !id) { setError('La messagerie Supabase n’est pas configurée.'); setLoading(false); return; }
+    const { data: auth } = await supabase.auth.getUser();
+    const currentUserId = auth.user?.id;
+    if (!currentUserId) { setError('Connecte-toi pour consulter tes messages.'); setLoading(false); return; }
+    setUserId(currentUserId);
+    const { data: members, error: membersError } = await supabase.from('conversation_members').select('user_id').eq('conversation_id', id);
+    if (membersError) { setError(membersError.message); setLoading(false); return; }
+    const otherId = members?.find((member) => member.user_id !== currentUserId)?.user_id;
+    if (!otherId) { setError('Conversation introuvable ou inaccessible.'); setLoading(false); return; }
+    const [{ data: profile }, { data: rows, error: messagesError }] = await Promise.all([
+      supabase.from('profiles').select('username,avatar_url').eq('id', otherId).maybeSingle(),
+      supabase.from('messages').select('id,body,sender_id,created_at').eq('conversation_id', id).order('created_at', { ascending: true }).limit(200),
+    ]);
+    if (messagesError) setError(messagesError.message);
+    setPartner(profile ?? { username: 'Utilisateur', avatar_url: null });
+    setMessages((rows ?? []) as ChatMessage[]);
+    setLoading(false);
+    await supabase.from('messages').update({ read_at: new Date().toISOString() }).eq('conversation_id', id).neq('sender_id', currentUserId).is('read_at', null);
+  }, [id]);
 
-  // Simulate typing indicator
+  useEffect(() => { void load(); }, [load]);
+
   useEffect(() => {
-    if (messages.length > 4 && messages[messages.length - 1].sender === 'me') {
-      setIsTyping(true);
-      setTimeout(() => {
-        setIsTyping(false);
-        setMessages(prev => [...prev, {
-          id: Date.now().toString(),
-          text: 'Haha, you bet! Let\'s do it.',
-          sender: 'other',
-          time: 'Just now'
-        }]);
-        scrollViewRef.current?.scrollToEnd({ animated: true });
-      }, 3000);
-    }
-  }, [messages]);
+    if (!supabase || !id) return;
+    const channel = supabase.channel(`conversation:${id}`)
+      .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'messages', filter: `conversation_id=eq.${id}` }, (payload) => {
+        const message = payload.new as ChatMessage;
+        setMessages((current) => current.some((item) => item.id === message.id) ? current : [...current, message]);
+        if (message.sender_id !== userId) void supabase?.from('messages').update({ read_at: new Date().toISOString() }).eq('id', message.id);
+        requestAnimationFrame(() => scrollViewRef.current?.scrollToEnd({ animated: true }));
+      }).subscribe();
+    return () => { void supabase?.removeChannel(channel); };
+  }, [id, userId]);
 
-  const sendMessage = () => {
-    if (inputMessage.trim() === '') return;
-    
-    setMessages(prev => [...prev, {
-      id: Date.now().toString(),
-      text: inputMessage,
-      sender: 'me',
-      time: 'Just now'
-    }]);
-    setInputMessage('');
-    setTimeout(() => {
-      scrollViewRef.current?.scrollToEnd({ animated: true });
-    }, 100);
-  };
-
-  const toggleLike = (id: string) => {
-    setMessages(prev => prev.map(msg => 
-      msg.id === id ? { ...msg, isLiked: !msg.isLiked } : msg
-    ));
-  };
-
-  const getAvatar = () => {
-    if (id === 'm1') return 'https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?q=80&w=200&auto=format&fit=crop';
-    if (id === 'm2') return 'https://images.unsplash.com/photo-1517841905240-472988babdf9?q=80&w=200&auto=format&fit=crop';
-    return 'https://images.unsplash.com/photo-1544005313-94ddf0286df2?q=80&w=200&auto=format&fit=crop';
-  };
-
-  const getName = () => {
-    if (id === 'm1') return 'alex_cyber';
-    if (id === 'm2') return 'dance_dancer';
-    return 'sparkle_girl';
+  const sendMessage = async () => {
+    const body = input.trim();
+    if (!body || !supabase || !id || sending) return;
+    setSending(true);
+    const { data, error: sendError } = await supabase.from('messages').insert({ conversation_id: id, sender_id: userId, body }).select('id,body,sender_id,created_at').single();
+    setSending(false);
+    if (sendError) { Alert.alert('Message non envoyé', sendError.message); return; }
+    setInput('');
+    if (data) setMessages((current) => current.some((message) => message.id === data.id) ? current : [...current, data as ChatMessage]);
+    requestAnimationFrame(() => scrollViewRef.current?.scrollToEnd({ animated: true }));
   };
 
   return (
-    <KeyboardAvoidingView 
-      style={{ flex: 1, backgroundColor: '#09090b' }} 
-      behavior={Platform.OS === 'ios' ? 'padding' : undefined}
-    >
-      {/* Header */}
+    <KeyboardAvoidingView style={{ flex: 1, backgroundColor: '#09090b' }} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
       <View style={{ paddingTop: insets.top }} className="bg-zinc-900 border-b border-zinc-800">
-        <View className="flex-row items-center justify-between px-4 pb-3 h-14">
-          <TouchableOpacity onPress={() => router.back()} className="p-2 -ml-2">
-            <ChevronLeft size={28} color="#ffffff" />
-          </TouchableOpacity>
-          
-          <View className="items-center flex-1">
-            <Text className="text-white font-extrabold text-base">{getName()}</Text>
-            {isTyping ? (
-              <Text className="text-zinc-500 text-xs mt-0.5">typing...</Text>
-            ) : (
-              <Text className="text-zinc-500 text-xs mt-0.5">Active now</Text>
-            )}
-          </View>
-
-          <View className="flex-row items-center gap-x-4">
-            <TouchableOpacity>
-              <Video size={22} color="#ffffff" />
-            </TouchableOpacity>
-            <TouchableOpacity>
-              <Info size={22} color="#ffffff" />
-            </TouchableOpacity>
-          </View>
+        <View className="flex-row items-center px-4 pb-3 h-14">
+          <TouchableOpacity onPress={() => router.back()} className="p-2 -ml-2"><ChevronLeft size={28} color="#fff" /></TouchableOpacity>
+          <View className="flex-1 items-center mr-8"><Text className="text-white font-extrabold text-base">{partner?.username ?? 'Messages'}</Text><Text className="text-zinc-500 text-xs mt-0.5">Message privé</Text></View>
         </View>
       </View>
 
-      {/* Messages */}
-      <ScrollView 
-        ref={scrollViewRef}
-        className="flex-1 px-4 py-4"
-        showsVerticalScrollIndicator={false}
-        contentContainerStyle={{ paddingBottom: 20 }}
-      >
-        <View className="items-center mb-6">
-          <Image source={{ uri: getAvatar() }} className="w-20 h-20 rounded-full mb-3 border-2 border-zinc-800" />
-          <Text className="text-white font-bold text-lg">{getName()}</Text>
-          <Text className="text-zinc-500 text-sm mt-1">3.2M Followers • 120 Following</Text>
-        </View>
+      {loading ? <View className="flex-1 items-center justify-center"><ActivityIndicator color="#ff0050" /></View> : (
+        <ScrollView ref={scrollViewRef} className="flex-1 px-4 py-4" showsVerticalScrollIndicator={false} contentContainerStyle={{ paddingBottom: 20 }} onContentSizeChange={() => scrollViewRef.current?.scrollToEnd({ animated: false })}>
+          {error ? <Text className="text-red-300 text-center mt-8">{error}</Text> : null}
+          {messages.length === 0 && !error ? <Text className="text-zinc-500 text-center mt-10">Aucun message. Commence la conversation.</Text> : null}
+          {messages.map((message) => {
+            const mine = message.sender_id === userId;
+            return <View key={message.id} className={`mb-3 flex-row ${mine ? 'justify-end' : 'justify-start'}`}>
+              {!mine ? <Image source={partner?.avatar_url ? { uri: partner.avatar_url } : undefined} className="w-8 h-8 rounded-full mr-2 mt-1 bg-zinc-800" /> : null}
+              <View className={`max-w-[78%] rounded-2xl px-4 py-3 ${mine ? 'bg-[#ff0050] rounded-tr-sm' : 'bg-zinc-800 rounded-tl-sm'}`}>
+                <Text className="text-white text-[15px] leading-5">{message.body}</Text>
+                <Text className={`text-[10px] mt-1 ${mine ? 'text-white/70' : 'text-zinc-500'}`}>{new Date(message.created_at).toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' })}</Text>
+              </View>
+            </View>;
+          })}
+        </ScrollView>
+      )}
 
-        {messages.map((msg) => (
-          <View 
-            key={msg.id} 
-            className={`mb-4 flex-row ${msg.sender === 'me' ? 'justify-end' : 'justify-start'}`}
-          >
-            {msg.sender === 'other' && (
-              <Image source={{ uri: getAvatar() }} className="w-8 h-8 rounded-full mr-2 mt-1 self-end" />
-            )}
-            
-            <View className={`relative max-w-[75%] rounded-2xl px-4 py-3 ${
-              msg.sender === 'me' 
-                ? 'bg-[#ff0050] rounded-tr-sm' 
-                : 'bg-zinc-800 rounded-tl-sm'
-            }`}>
-              {msg.type === 'video' && msg.videoThumbnail && (
-                <View className="mb-2 relative rounded-lg overflow-hidden">
-                  <Image source={{ uri: msg.videoThumbnail }} className="w-full h-40 rounded-lg" resizeMode="cover" />
-                  <View className="absolute inset-0 items-center justify-center bg-black/20">
-                    <Video size={30} color="white" fill="white" />
-                  </View>
-                </View>
-              )}
-              <Text className="text-white text-[15px] leading-5">{msg.text}</Text>
-              
-              {/* Double tap simulation button (small heart below message) */}
-              {msg.sender === 'other' && (
-                <TouchableOpacity 
-                  onPress={() => toggleLike(msg.id)}
-                  className="absolute -bottom-2 -right-2 bg-zinc-900 rounded-full p-1 border border-zinc-800"
-                >
-                  <Heart size={12} color={msg.isLiked ? "#ff0050" : "#888"} fill={msg.isLiked ? "#ff0050" : "transparent"} />
-                </TouchableOpacity>
-              )}
-            </View>
-          </View>
-        ))}
-
-        {isTyping && (
-          <View className="flex-row items-center mb-4">
-            <Image source={{ uri: getAvatar() }} className="w-8 h-8 rounded-full mr-2" />
-            <View className="bg-zinc-800 rounded-2xl rounded-tl-sm px-4 py-3 w-16 items-center flex-row justify-center gap-x-1">
-              <View className="w-1.5 h-1.5 rounded-full bg-zinc-500" />
-              <View className="w-1.5 h-1.5 rounded-full bg-zinc-500" />
-              <View className="w-1.5 h-1.5 rounded-full bg-zinc-500" />
-            </View>
-          </View>
-        )}
-      </ScrollView>
-
-      {/* Input area */}
       <View style={{ paddingBottom: insets.bottom || 16 }} className="px-4 py-3 border-t border-zinc-800 bg-zinc-950 flex-row items-center gap-x-3">
-        <TouchableOpacity className="bg-zinc-800 p-2.5 rounded-full">
-          <Camera size={22} color="#ffffff" />
-        </TouchableOpacity>
-        
-        <View className="flex-1 bg-zinc-800 rounded-full flex-row items-center px-4 py-1 h-11 border border-zinc-700">
-          <TextInput
-            value={inputMessage}
-            onChangeText={setInputMessage}
-            placeholder="Send a message..."
-            placeholderTextColor="#888"
-            className="flex-1 text-white text-[15px]"
-            multiline
-            maxLength={200}
-            style={{ paddingTop: 0, paddingBottom: 0 }}
-          />
+        <View className="flex-1 bg-zinc-800 rounded-full flex-row items-center px-4 py-1 min-h-11 border border-zinc-700">
+          <TextInput value={input} onChangeText={setInput} placeholder="Écrire un message…" placeholderTextColor="#888" className="flex-1 text-white text-[15px]" multiline maxLength={5000} onSubmitEditing={() => void sendMessage()} />
         </View>
-
-        {inputMessage.length > 0 ? (
-          <TouchableOpacity onPress={sendMessage} className="bg-[#ff0050] p-2.5 rounded-full">
-            <Send size={20} color="#ffffff" />
-          </TouchableOpacity>
-        ) : (
-          <TouchableOpacity className="p-2.5">
-            <Heart size={24} color="#ff0050" fill="#ff0050" />
-          </TouchableOpacity>
-        )}
+        <TouchableOpacity disabled={!input.trim() || sending || !userId} onPress={() => void sendMessage()} className={`p-2.5 rounded-full ${input.trim() ? 'bg-[#ff0050]' : 'bg-zinc-800'}`}><Send size={20} color="#fff" /></TouchableOpacity>
       </View>
     </KeyboardAvoidingView>
   );

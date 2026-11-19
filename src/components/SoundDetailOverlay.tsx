@@ -150,7 +150,7 @@ export default function SoundDetailOverlay({ isVisible, onClose, musicTitle }: S
                   <Image source={{ uri: video.userAvatar }} className="w-full h-full object-cover" />
                   <View className="absolute bottom-1.5 left-1.5 flex-row items-center">
                     <Play size={10} color="#ffffff" fill="#ffffff" className="mr-1" />
-                    <Text className="text-white text-[9px] font-bold">{(video.likes / 10).toFixed(0)}</Text>
+                    <Text className="text-white text-[9px] font-bold">{video.views.toLocaleString()}</Text>
                   </View>
                 </View>
               ))

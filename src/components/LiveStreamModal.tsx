@@ -1,318 +1,118 @@
-import React, { useState, useEffect, useRef } from 'react';
-import { View, Text, Image, Modal, TouchableOpacity, ScrollView, Dimensions, TextInput } from 'react-native';
-import { X, Send, Heart, Gift, Users, Eye } from 'lucide-react-native';
-import * as Haptics from 'expo-haptics';
-import Animated, { useSharedValue, useAnimatedStyle, withTiming, Easing, runOnJS } from 'react-native-reanimated';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
+import { ActivityIndicator, Image, Modal, ScrollView, Text, TextInput, TouchableOpacity, View } from 'react-native';
+import { Send, Users, X, ChevronLeft, Radio } from 'lucide-react-native';
 import { useVideoPlayer, VideoView } from 'expo-video';
+import { supabase } from '../lib/supabase';
 
-const { width, height } = Dimensions.get('window');
+type LiveStream = { id: string; host_id: string; title: string; playback_url: string | null; viewer_count: number; profiles?: { username: string; avatar_url: string | null } | null };
+type LiveComment = { id: string; author_id: string; body: string; created_at: string; username: string; avatar_url: string | null };
 
-interface LiveStreamModalProps {
-  isVisible: boolean;
-  onClose: () => void;
-}
-
-// Subcomponent to animate floating gift item
-function FloatingGift({ emoji, x, y, onComplete }: { emoji: string; x: number; y: number; onComplete: () => void }) {
-  const translateY = useSharedValue(0);
-  const scale = useSharedValue(1.5);
-  const opacity = useSharedValue(1);
-
-  useEffect(() => {
-    translateY.value = withTiming(-200, { duration: 1000, easing: Easing.out(Easing.quad) });
-    scale.value = withTiming(0.8, { duration: 1000 });
-    opacity.value = withTiming(0, { duration: 1000 }, () => {
-      runOnJS(onComplete)();
-    });
-  }, []);
-
-  const animatedStyle = useAnimatedStyle(() => {
-    return {
-      transform: [
-        { translateX: x - 25 },
-        { translateY: y - 25 + translateY.value },
-        { scale: scale.value },
-      ],
-      opacity: opacity.value,
-    };
-  });
-
-  return (
-    <Animated.View
-      style={[
-        {
-          position: 'absolute',
-          zIndex: 60,
-          pointerEvents: 'none',
-        },
-        animatedStyle,
-      ]}
-    >
-      <Text style={{ fontSize: 40 }}>{emoji}</Text>
-    </Animated.View>
-  );
-}
+interface LiveStreamModalProps { isVisible: boolean; onClose: () => void }
 
 export default function LiveStreamModal({ isVisible, onClose }: LiveStreamModalProps) {
-  const [comments, setComments] = useState<Array<{ id: string; user: string; text: string }>>([
-    { id: '1', user: 'jack_12', text: 'Wow, hello from Paris! 🗼' },
-    { id: '2', user: 'lisa_m', text: 'You look amazing today!' },
-  ]);
-  const [chatInput, setChatInput] = useState('');
-  const [showGiftDrawer, setShowGiftDrawer] = useState(false);
-  const [floatingGifts, setFloatingGifts] = useState<Array<{ id: string; emoji: string; x: number; y: number }>>([]);
-  const [giftAlert, setGiftAlert] = useState<string | null>(null);
+  const [streams, setStreams] = useState<LiveStream[]>([]);
+  const [selected, setSelected] = useState<LiveStream | null>(null);
+  const [comments, setComments] = useState<LiveComment[]>([]);
+  const [input, setInput] = useState('');
+  const [userId, setUserId] = useState('');
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState('');
+  const commentsRef = useRef<ScrollView>(null);
+  const player = useVideoPlayer(null);
 
-  const commentsScrollViewRef = useRef<ScrollView>(null);
-
-  const player = useVideoPlayer(require('../../assets/sample.mp4'), (playerInstance) => {
-    playerInstance.loop = true;
-    playerInstance.muted = true;
-    if (isVisible) {
-      playerInstance.play();
-    }
-  });
+  const loadStreams = useCallback(async () => {
+    if (!supabase) { setError('Les lives nécessitent une configuration Supabase.'); return; }
+    setLoading(true);
+    setError('');
+    const [{ data: auth }, { data, error: queryError }] = await Promise.all([
+      supabase.auth.getUser(),
+      supabase.from('live_streams').select('id,host_id,title,playback_url,viewer_count,profiles:host_id(username,avatar_url)').eq('status', 'live').order('started_at', { ascending: false }),
+    ]);
+    if (queryError) setError(queryError.message);
+    setUserId(auth.user?.id ?? '');
+    const actualStreams = (data ?? []) as unknown as LiveStream[];
+    setStreams(actualStreams);
+    setSelected((current) => current ? actualStreams.find((stream) => stream.id === current.id) ?? null : null);
+    setLoading(false);
+  }, []);
 
   useEffect(() => {
-    if (isVisible) {
-      player.play();
-    } else {
-      player.pause();
-    }
-  }, [isVisible, player]);
+    if (!isVisible) return;
+    void loadStreams();
+    if (!supabase) return;
+    const channel = supabase.channel('live-stream-list')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'live_streams' }, () => { void loadStreams(); })
+      .subscribe();
+    return () => { void supabase?.removeChannel(channel); };
+  }, [isVisible, loadStreams]);
 
-  const mockUsers = ['sarah_k', 'bob_builder', 'dan_tech', 'gamer_boy', 'skater_lisa', 'neon_rider'];
-  const mockTexts = [
-    'Super cool broadcast! 🔥',
-    'Play some music! 🎶',
-    'Where are you live from?',
-    'Sending good vibes! ✨',
-    'This is awesome 🙌',
-    'Wow, count me in!',
-  ];
-
-  // Auto-scrolling drift comments interval
   useEffect(() => {
-    let commentTimer: any;
-    if (isVisible) {
-      commentTimer = setInterval(() => {
-        const randomUser = mockUsers[Math.floor(Math.random() * mockUsers.length)];
-        const randomText = mockTexts[Math.floor(Math.random() * mockTexts.length)];
-        const newComment = {
-          id: `comment_${Date.now()}_${Math.random()}`,
-          user: randomUser,
-          text: randomText,
-        };
-        setComments((prev) => [...prev, newComment]);
-        
-        // Scroll to end
-        setTimeout(() => {
-          commentsScrollViewRef.current?.scrollToEnd({ animated: true });
-        }, 100);
-      }, 2000);
-    }
-    return () => clearInterval(commentTimer);
-  }, [isVisible]);
+    let cancelled = false;
+    if (!selected?.playback_url || !isVisible) { player.pause(); return; }
+    void player.replaceAsync(selected.playback_url).then(() => { if (!cancelled) player.play(); }).catch(() => setError('Le lecteur ne peut pas ouvrir le flux de ce live.'));
+    return () => { cancelled = true; player.pause(); };
+  }, [isVisible, player, selected?.id, selected?.playback_url]);
 
-  const handleSendChat = () => {
-    if (chatInput.trim() === '') return;
-    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-    
-    const newComment = {
-      id: `comment_user_${Date.now()}`,
-      user: 'you_clone',
-      text: chatInput,
+  useEffect(() => {
+    if (!supabase || !selected) { setComments([]); return; }
+    let cancelled = false;
+    const loadComments = async () => {
+      const { data } = await supabase!.from('live_messages').select('id,author_id,body,created_at').eq('stream_id', selected.id).order('created_at', { ascending: true }).limit(100);
+      const rows = data ?? [];
+      const authorIds = [...new Set(rows.map((row) => row.author_id))];
+      const { data: profiles } = authorIds.length ? await supabase!.from('profiles').select('id,username,avatar_url').in('id', authorIds) : { data: [] };
+      const byId = new Map((profiles ?? []).map((profile) => [profile.id, profile]));
+      if (!cancelled) setComments(rows.map((row) => ({ ...row, username: byId.get(row.author_id)?.username ?? 'Utilisateur', avatar_url: byId.get(row.author_id)?.avatar_url ?? null })));
     };
-    setComments((prev) => [...prev, newComment]);
-    setChatInput('');
-    
-    setTimeout(() => {
-      commentsScrollViewRef.current?.scrollToEnd({ animated: true });
-    }, 100);
+    void loadComments();
+    const channel = supabase.channel(`live-chat:${selected.id}`)
+      .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'live_messages', filter: `stream_id=eq.${selected.id}` }, async (payload) => {
+        const row = payload.new as { id: string; author_id: string; body: string; created_at: string };
+        const { data: profile } = await supabase!.from('profiles').select('username,avatar_url').eq('id', row.author_id).maybeSingle();
+        setComments((current) => current.some((comment) => comment.id === row.id) ? current : [...current, { ...row, username: profile?.username ?? 'Utilisateur', avatar_url: profile?.avatar_url ?? null }]);
+        requestAnimationFrame(() => commentsRef.current?.scrollToEnd({ animated: true }));
+      }).subscribe();
+    return () => { cancelled = true; void supabase?.removeChannel(channel); };
+  }, [selected?.id]);
+
+  const sendComment = async () => {
+    const body = input.trim();
+    if (!supabase || !selected || !userId || !body) return;
+    const { error: sendError } = await supabase.from('live_messages').insert({ stream_id: selected.id, author_id: userId, body });
+    if (sendError) setError(sendError.message);
+    else setInput('');
   };
 
-  const handleSendGift = (emoji: string, name: string) => {
-    setShowGiftDrawer(false);
-    Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-    
-    setGiftAlert(`You sent a ${name} ${emoji}!`);
-    setTimeout(() => setGiftAlert(null), 2000);
-
-    // Spawn 3 floating gift emojis from the gift button location
-    const startX = width - 70;
-    const startY = height - 100;
-    const newGifts = [
-      { id: `g1_${Date.now()}`, emoji, x: startX, y: startY },
-      { id: `g2_${Date.now()}`, emoji, x: startX - 20, y: startY - 30 },
-      { id: `g3_${Date.now()}`, emoji, x: startX + 20, y: startY - 15 },
-    ];
-    setFloatingGifts((prev) => [...prev, ...newGifts]);
-  };
-
-  const spawnRandomHearts = () => {
-    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
-    const startX = width - 40;
-    const startY = height - 150;
-    const newGifts = [
-      { id: `h1_${Date.now()}`, emoji: '❤️', x: startX, y: startY },
-      { id: `h2_${Date.now()}`, emoji: '💖', x: startX - 10, y: startY - 20 },
-    ];
-    setFloatingGifts((prev) => [...prev, ...newGifts]);
-  };
+  const close = () => { player.pause(); setSelected(null); setError(''); onClose(); };
 
   return (
-    <Modal visible={isVisible} animationType="fade" transparent onRequestClose={onClose}>
-      <View className="flex-1 bg-black justify-end relative">
-        {/* Background Simulated Live Video Feed (Beautiful Dark Gradient & Profile mock) */}
-        <View className="absolute inset-0 bg-gradient-to-b from-zinc-900 to-zinc-950 items-center justify-center">
-          <View style={{ position: 'absolute', width: '100%', height: '100%', opacity: 0.65 }}>
-            <VideoView player={player} style={{ width: '100%', height: '100%' }} contentFit="cover" nativeControls={false} />
-          </View>
-          <View className="absolute top-48 items-center">
-            <Image
-              source={{ uri: 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?q=80&w=200&auto=format&fit=crop' }}
-              className="w-20 h-20 rounded-full border-2 border-[#ff0050] mb-3"
-            />
-            <Text className="text-white font-extrabold text-lg">@neongirl_99</Text>
-            <Text className="text-[#ff0050] text-xs font-bold uppercase tracking-widest mt-1">Live Broadcast</Text>
-          </View>
+    <Modal visible={isVisible} animationType="slide" onRequestClose={close}>
+      <View className="flex-1 bg-black">
+        <View className="pt-14 pb-3 px-4 flex-row items-center justify-between border-b border-zinc-800">
+          {selected ? <TouchableOpacity onPress={() => { player.pause(); setSelected(null); }} className="flex-row items-center"><ChevronLeft size={22} color="#fff" /><Text className="text-white ml-1">Lives en cours</Text></TouchableOpacity> : <View className="flex-row items-center"><Radio size={18} color="#ff315b" /><Text className="text-white font-extrabold text-lg ml-2">Lives en cours</Text></View>}
+          <TouchableOpacity onPress={close} className="p-2"><X size={24} color="#fff" /></TouchableOpacity>
         </View>
 
-        {/* Floating elements layer */}
-        {floatingGifts.map((gift) => (
-          <FloatingGift
-            key={gift.id}
-            emoji={gift.emoji}
-            x={gift.x}
-            y={gift.y}
-            onComplete={() => {
-              setFloatingGifts((prev) => prev.filter((g) => g.id !== gift.id));
-            }}
-          />
-        ))}
-
-        {/* Top Overlay HUD */}
-        <View className="absolute top-14 left-4 right-4 flex-row justify-between items-center z-10">
-          <View className="flex-row items-center bg-black/40 px-3 py-1.5 rounded-full border border-white/10">
-            <View className="w-2 h-2 rounded-full bg-[#ff0050] animate-pulse mr-2" />
-            <Text className="text-white font-extrabold text-xs mr-2">LIVE</Text>
-            <Eye size={12} color="#ffffff" className="mr-1" />
-            <Text className="text-white text-[10px] font-bold">12.4K</Text>
-          </View>
-
-          <TouchableOpacity onPress={onClose} className="bg-black/40 p-2 rounded-full">
-            <X size={20} color="#ffffff" />
-          </TouchableOpacity>
-        </View>
-
-        {/* Central Gift Alert Toast */}
-        {giftAlert && (
-          <View className="absolute top-1/3 left-10 right-10 z-35 bg-[#ff0050]/90 border border-white/20 p-4 rounded-2xl items-center shadow-lg">
-            <Text className="text-white font-extrabold text-base text-center">{giftAlert}</Text>
-          </View>
-        )}
-
-        {/* Bottom Left Scrolling Chats Container */}
-        <View className="h-40 px-4 w-[75%] mb-4 z-10">
-          <ScrollView
-            ref={commentsScrollViewRef}
-            showsVerticalScrollIndicator={false}
-            className="flex-1"
-          >
-            {comments.map((item) => (
-              <View key={item.id} className="bg-black/30 p-2.5 rounded-xl mb-2 flex-row flex-wrap border border-white/5">
-                <Text className="text-cyan-400 font-bold text-xs mr-1.5">@{item.user}:</Text>
-                <Text className="text-white text-xs">{item.text}</Text>
-              </View>
-            ))}
-          </ScrollView>
-        </View>
-
-        {/* Bottom Interactive Panel */}
-        <View className="flex-row items-center px-4 pb-8 z-10 gap-x-3 bg-gradient-to-t from-black/80 to-transparent pt-4">
-          <View className="flex-1 bg-zinc-900/90 border border-zinc-800 rounded-full px-4 py-2.5 flex-row items-center">
-            <TextInput
-              value={chatInput}
-              onChangeText={setChatInput}
-              placeholder="Say something nice..."
-              placeholderTextColor="#888888"
-              className="flex-1 text-white text-xs h-6"
-              onSubmitEditing={handleSendChat}
-            />
-            <TouchableOpacity onPress={handleSendChat}>
-              <Send size={16} color={chatInput.trim() ? '#ff0050' : '#888888'} />
-            </TouchableOpacity>
-          </View>
-
-          {/* Gift trigger button */}
-          <TouchableOpacity
-            onPress={() => setShowGiftDrawer(true)}
-            className="bg-yellow-500 p-3 rounded-full border border-yellow-400 shadow-md"
-          >
-            <Gift size={20} color="#000000" strokeWidth={2.5} />
-          </TouchableOpacity>
-
-          {/* Double hearts generator shortcut */}
-          <TouchableOpacity
-            onPress={spawnRandomHearts}
-            className="bg-[#ff0050] p-3 rounded-full border border-pink-400 shadow-md"
-          >
-            <Heart size={20} color="#ffffff" fill="#ffffff" />
-          </TouchableOpacity>
-        </View>
-
-        {/* Gift Selection Panel (Drawer Modal) */}
-        <Modal visible={showGiftDrawer} animationType="slide" transparent>
-          <View className="flex-1 bg-black/60 justify-end">
-            <TouchableOpacity className="flex-1" onPress={() => setShowGiftDrawer(false)} />
-            <View className="bg-zinc-900 border-t border-zinc-800 rounded-t-3xl p-5 pb-10">
-              <View className="flex-row items-center justify-between mb-5">
-                <Text className="text-white font-extrabold text-base">Send Gift</Text>
-                <TouchableOpacity onPress={() => setShowGiftDrawer(false)}>
-                  <X size={20} color="#888888" />
-                </TouchableOpacity>
-              </View>
-
-              <View className="flex-row justify-around flex-wrap gap-y-4">
-                <TouchableOpacity
-                  onPress={() => handleSendGift('🌹', 'Rose')}
-                  className="items-center bg-zinc-850 p-4 rounded-2xl w-[22%]"
-                >
-                  <Text style={{ fontSize: 32 }}>🌹</Text>
-                  <Text className="text-white text-[10px] font-bold mt-2">Rose</Text>
-                  <Text className="text-yellow-500 text-[8px] mt-0.5">1 Coin</Text>
-                </TouchableOpacity>
-
-                <TouchableOpacity
-                  onPress={() => handleSendGift('😎', 'Sunnies')}
-                  className="items-center bg-zinc-850 p-4 rounded-2xl w-[22%]"
-                >
-                  <Text style={{ fontSize: 32 }}>😎</Text>
-                  <Text className="text-white text-[10px] font-bold mt-2">Sunnies</Text>
-                  <Text className="text-yellow-500 text-[8px] mt-0.5">10 Coins</Text>
-                </TouchableOpacity>
-
-                <TouchableOpacity
-                  onPress={() => handleSendGift('💎', 'Diamond')}
-                  className="items-center bg-zinc-850 p-4 rounded-2xl w-[22%]"
-                >
-                  <Text style={{ fontSize: 32 }}>💎</Text>
-                  <Text className="text-white text-[10px] font-bold mt-2">Diamond</Text>
-                  <Text className="text-yellow-500 text-[8px] mt-0.5">50 Coins</Text>
-                </TouchableOpacity>
-
-                <TouchableOpacity
-                  onPress={() => handleSendGift('🏎️', 'Supercar')}
-                  className="items-center bg-zinc-850 p-4 rounded-2xl w-[22%]"
-                >
-                  <Text style={{ fontSize: 32 }}>🏎️</Text>
-                  <Text className="text-white text-[10px] font-bold mt-2">Supercar</Text>
-                  <Text className="text-yellow-500 text-[8px] mt-0.5">500 Coins</Text>
-                </TouchableOpacity>
-              </View>
+        {loading ? <View className="flex-1 items-center justify-center"><ActivityIndicator color="#ff0050" /></View> : selected ? (
+          <View className="flex-1">
+            {selected.playback_url ? <VideoView player={player} style={{ width: '100%', height: '57%' }} contentFit="cover" nativeControls={false} surfaceType="textureView" /> : <View className="h-[57%] bg-zinc-900 items-center justify-center px-8"><Radio size={34} color="#ff315b" /><Text className="text-zinc-200 text-center mt-3">Le flux vidéo n’est pas disponible pour ce live.</Text></View>}
+            <View className="px-4 py-3 border-b border-zinc-800 flex-row items-center justify-between">
+              <View className="flex-1 mr-3"><Text className="text-white font-bold" numberOfLines={1}>{selected.title}</Text><Text className="text-zinc-400 text-xs mt-1">@{selected.profiles?.username ?? 'Utilisateur'}</Text></View>
+              <View className="flex-row items-center"><Users size={14} color="#bbb" /><Text className="text-zinc-300 text-xs ml-1">{selected.viewer_count}</Text></View>
             </View>
+            {error ? <Text className="text-red-300 px-4 py-2 text-xs">{error}</Text> : null}
+            <ScrollView ref={commentsRef} className="flex-1 px-4 py-3" keyboardShouldPersistTaps="handled">
+              {comments.map((comment) => <View key={comment.id} className="flex-row items-start mb-3"><Image source={comment.avatar_url ? { uri: comment.avatar_url } : undefined} className="w-7 h-7 rounded-full mr-2 bg-zinc-800" /><Text className="flex-1 text-white text-sm"><Text className="text-zinc-400 font-bold">{comment.username} </Text>{comment.body}</Text></View>)}
+            </ScrollView>
+            <View className="px-3 py-3 border-t border-zinc-800 flex-row items-center"><TextInput value={input} onChangeText={setInput} maxLength={500} placeholder={userId ? 'Écrire un commentaire…' : 'Connecte-toi pour commenter'} placeholderTextColor="#777" editable={Boolean(userId)} onSubmitEditing={() => void sendComment()} className="flex-1 rounded-full bg-zinc-900 text-white px-4 py-3 mr-2" /><TouchableOpacity onPress={() => void sendComment()} disabled={!input.trim() || !userId} className="p-3"><Send size={20} color={input.trim() && userId ? '#ff315b' : '#666'} /></TouchableOpacity></View>
           </View>
-        </Modal>
+        ) : (
+          <ScrollView className="flex-1 px-4 pt-4" contentContainerStyle={{ paddingBottom: 30 }}>
+            {error ? <Text className="text-red-300 text-center mt-8">{error}</Text> : null}
+            {!error && streams.length === 0 ? <View className="flex-1 items-center justify-center pt-36"><Radio size={36} color="#555" /><Text className="text-white font-bold mt-4">Aucun live pour le moment</Text><Text className="text-zinc-500 text-xs text-center mt-2">Les diffusions en direct apparaîtront ici.</Text></View> : null}
+            {streams.map((stream) => <TouchableOpacity key={stream.id} onPress={() => setSelected(stream)} className="flex-row items-center rounded-2xl bg-zinc-900 border border-zinc-800 p-4 mb-3"><View className="w-12 h-12 rounded-full bg-red-950 items-center justify-center mr-3"><Radio size={22} color="#ff315b" /></View><View className="flex-1"><Text className="text-white font-bold" numberOfLines={1}>{stream.title}</Text><Text className="text-zinc-400 text-xs mt-1">@{stream.profiles?.username ?? 'Utilisateur'}</Text></View><View className="bg-red-600 rounded-full px-2.5 py-1"><Text className="text-white text-[10px] font-extrabold">LIVE</Text></View></TouchableOpacity>)}
+          </ScrollView>
+        )}
       </View>
     </Modal>
   );

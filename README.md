@@ -79,3 +79,14 @@ The cloud foundation is ready in `src/lib/supabase.ts` and `supabase/migrations/
 4. Install dependencies with `npm install` and start with `npx expo start`.
 
 When credentials are absent, the app keeps its local demo feed. Once credentials are present, import `supabase` or `requireSupabase()` from `src/lib/supabase.ts` in data services. The SQL migration creates profiles, videos, sounds, follows, likes, comments/replies, conversations, messages, notifications, media buckets, RLS policies, counters, and realtime publication entries.
+
+## Déploiement Web avec GitHub et Netlify
+
+L’export statique Expo v56 est configuré pour être publié depuis `dist/`.
+
+1. Poussez le dépôt sur GitHub. Le workflow `Web build` lance `npm ci` puis `npm run build:web` à chaque push sur `main` ou `master` et pour chaque pull request.
+2. Dans Netlify, choisissez **Add new site > Import an existing project** et connectez le dépôt GitHub.
+3. Netlify détecte les paramètres dans `netlify.toml` : commande `npm run build:web`, dossier publié `dist`.
+4. Si l’application doit se connecter à Supabase, ajoutez `EXPO_PUBLIC_SUPABASE_URL` et `EXPO_PUBLIC_SUPABASE_ANON_KEY` dans **Site configuration > Environment variables**, puis relancez le déploiement. Ces variables sont intégrées au bundle web : utilisez uniquement la clé publique anon/publishable, avec les règles RLS activées. N’ajoutez jamais de clé `service_role`.
+
+Pour générer le site localement, lancez `npm run build:web`. Le résultat est écrit dans `dist/`.

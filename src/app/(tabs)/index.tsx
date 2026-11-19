@@ -1,63 +1,118 @@
-import React, { useState, useRef } from 'react';
-import { FlatList, View, Text, StatusBar, TouchableOpacity, Dimensions } from 'react-native';
+﻿import React, { useState, useRef, useEffect, useCallback, useMemo } from 'react';
+import { FlatList, View, Text, StatusBar, TouchableOpacity, AppState, useWindowDimensions, LayoutChangeEvent, ActivityIndicator } from 'react-native';
+import { useFocusEffect } from 'expo-router';
 import { useVideoStore } from '../../store/useVideoStore';
 import VideoPost from '../../components/VideoPost';
 import LiveStreamModal from '../../components/LiveStreamModal';
+import { pauseAll } from '../../lib/playbackManager';
 import { Users, Sparkles, Tv } from 'lucide-react-native';
 
+const TAB_BAR_HEIGHT = 60;
+
 export default function HomeFeed() {
-  const { videos, hiddenVideoIds } = useVideoStore();
+  const { videos, hiddenVideoIds, isFeedLoading } = useVideoStore();
+  const { height: windowHeight } = useWindowDimensions();
+  const [feedHeight, setFeedHeight] = useState(0);
+  const fallbackItemHeight = Math.max(windowHeight - TAB_BAR_HEIGHT, 1);
+  const itemHeight = feedHeight || fallbackItemHeight;
+
+  const handleFeedLayout = useCallback((event: LayoutChangeEvent) => {
+    const nextHeight = Math.round(event.nativeEvent.layout.height);
+    if (nextHeight > 0) {
+      setFeedHeight((currentHeight) => currentHeight === nextHeight ? currentHeight : nextHeight);
+    }
+  }, []);
+
   const [feedType, setFeedType] = useState<'following' | 'foryou'>('foryou');
   const [activeId, setActiveId] = useState<string>('');
   const [showLive, setShowLive] = useState<boolean>(false);
+  const [appActive, setAppActive] = useState(AppState.currentState === 'active');
+  const [isFocused, setIsFocused] = useState(true);
+  useFocusEffect(
+    useCallback(() => {
+      setIsFocused(true);
+      return () => {
+        setIsFocused(false);
+        pauseAll();
+      };
+    }, [])
+  );
+  const listRef = useRef<FlatList<any>>(null);
+
+  // Pause quand l'app passe en arriÃ¨re-plan.
+  useEffect(() => {
+    const sub = AppState.addEventListener('change', (state) => {
+      const active = state === 'active';
+      setAppActive(active);
+      if (!active) pauseAll();
+    });
+    return () => sub.remove();
+  }, []);
+
+  // Pause quand on quitte l'onglet.
+  useEffect(() => {
+    if (!isFocused) pauseAll();
+  }, [isFocused]);
+
+  const filteredVideos = useMemo(
+    () =>
+      videos.filter(
+        (vid) => !hiddenVideoIds.includes(vid.id) && (feedType === 'following' ? vid.isFollowing : true)
+      ),
+    [videos, hiddenVideoIds, feedType]
+  );
+
+  // Une seule vidÃ©o active : celle visible, sinon la premiÃ¨re de la liste.
+  const effectiveActiveId = filteredVideos.some((v) => v.id === activeId)
+    ? activeId
+    : filteredVideos[0]?.id ?? '';
+
+  // Retour en haut quand on change d'onglet.
+  useEffect(() => {
+    setActiveId('');
+    listRef.current?.scrollToOffset({ offset: 0, animated: false });
+  }, [feedType]);
 
   const viewabilityConfig = useRef({
-    itemVisiblePercentThreshold: 60,
+    itemVisiblePercentThreshold: 80,
+    minimumViewTime: 80,
   }).current;
 
   const onViewableItemsChanged = useRef(({ viewableItems }: any) => {
-    if (viewableItems.length > 0) {
-      setActiveId(viewableItems[0].item.id);
-    }
+    // On garde exactement un item : celui avec l'index le plus proche de l'Ã©cran.
+    const first = viewableItems.find((v: any) => v.isViewable);
+    if (first?.item?.id) setActiveId(first.item.id);
   }).current;
 
-  // Filter videos: exclude hidden videos, and optionally filter by follow state
-  const visibleVideos = videos.filter((vid) => !hiddenVideoIds.includes(vid.id));
-  
-  const filteredVideos = visibleVideos.filter((vid) => {
-    if (feedType === 'following') {
-      return vid.isFollowing;
-    }
-    return true;
-  });
+  const renderItem = useCallback(
+    ({ item }: { item: any }) => (
+      <VideoPost
+        video={item}
+        height={itemHeight}
+        isActive={item.id === effectiveActiveId && isFocused && appActive}
+      />
+    ),
+    [effectiveActiveId, isFocused, appActive, itemHeight]
+  );
 
-  // Automatically select the first video if the active ID is not in the list
-  React.useEffect(() => {
-    if (filteredVideos.length > 0) {
-      const ids = filteredVideos.map(v => v.id);
-      if (!ids.includes(activeId)) {
-        setActiveId(filteredVideos[0].id);
-      }
-    } else {
-      setActiveId('');
-    }
-  }, [feedType, videos, hiddenVideoIds]);
+  const getItemLayout = useCallback(
+    (_: any, index: number) => ({ length: itemHeight, offset: itemHeight * index, index }),
+    [itemHeight]
+  );
 
   return (
-    <View className="flex-1 bg-black">
+    <View className="flex-1 bg-black" onLayout={handleFeedLayout}>
       <StatusBar barStyle="light-content" translucent />
 
-      {/* Flashing Live broadcast badge (Top Left) */}
       <TouchableOpacity
         onPress={() => setShowLive(true)}
         className="absolute top-12 left-4 z-20 bg-red-600 border border-red-500 px-2.5 py-1 rounded-full flex-row items-center"
       >
-        <Tv size={12} color="#ffffff" className="mr-1" />
-        <Text className="text-white text-[9px] font-extrabold tracking-widest uppercase">LIVE</Text>
+        <Tv size={12} color="#ffffff" />
+        <Text className="text-white text-[9px] font-extrabold tracking-widest uppercase ml-1">LIVE</Text>
       </TouchableOpacity>
-      
-      {/* Top Header Selector */}
-      <View className="absolute top-12 left-0 right-0 z-20 flex-row justify-center items-center gap-x-6">
+
+      <View className="absolute top-12 left-0 right-0 z-10 flex-row justify-center items-center gap-x-6" pointerEvents="box-none">
         <TouchableOpacity onPress={() => setFeedType('following')} className="items-center py-1">
           <Text className={`text-sm font-bold ${feedType === 'following' ? 'text-white text-[15px]' : 'text-zinc-400'}`}>
             Following
@@ -73,11 +128,25 @@ export default function HomeFeed() {
         </TouchableOpacity>
       </View>
 
-      {filteredVideos.length === 0 ? (
+      {isFeedLoading ? (
+        <View className="flex-1 items-center justify-center bg-black px-8">
+          <View className="w-full h-[68%] rounded-2xl bg-zinc-900 overflow-hidden border border-zinc-800">
+            <View className="flex-1 bg-zinc-800/80 items-center justify-center">
+              <ActivityIndicator size="large" color="#ff0050" />
+              <Text className="text-zinc-300 text-xs font-semibold mt-4">Préparation de la vidéo…</Text>
+            </View>
+            <View className="p-4 gap-y-3">
+              <View className="w-32 h-3 rounded-full bg-zinc-700" />
+              <View className="w-4/5 h-3 rounded-full bg-zinc-800" />
+              <View className="w-1/2 h-3 rounded-full bg-zinc-800" />
+            </View>
+          </View>
+        </View>
+      ) : filteredVideos.length === 0 ? (
         <View className="flex-1 justify-center items-center bg-black px-8">
           {feedType === 'following' ? (
             <View className="items-center">
-              <View className="bg-zinc-900 p-5 rounded-full mb-4 border border-zinc-850">
+              <View className="bg-zinc-900 p-5 rounded-full mb-4 border border-zinc-800">
                 <Users size={36} color="#888888" />
               </View>
               <Text className="text-white text-base font-extrabold text-center mb-2">
@@ -86,48 +155,45 @@ export default function HomeFeed() {
               <Text className="text-zinc-500 text-xs text-center leading-5 mb-6">
                 Trending videos from creators you follow will appear here. Go to the "For You" tab to find creators.
               </Text>
-              <TouchableOpacity
-                onPress={() => setFeedType('foryou')}
-                className="bg-[#ff0050] px-6 py-3 rounded-full"
-              >
+              <TouchableOpacity onPress={() => setFeedType('foryou')} className="bg-[#ff0050] px-6 py-3 rounded-full">
                 <Text className="text-white font-extrabold text-sm">Explore For You</Text>
               </TouchableOpacity>
             </View>
           ) : (
             <View className="items-center">
-              <View className="bg-zinc-900 p-5 rounded-full mb-4 border border-zinc-850">
+              <View className="bg-zinc-900 p-5 rounded-full mb-4 border border-zinc-800">
                 <Sparkles size={36} color="#888888" />
               </View>
-              <Text className="text-white text-base font-extrabold text-center mb-2">
-                No videos available
-              </Text>
-              <Text className="text-zinc-500 text-xs text-center">
-                Check back later or upload a new creation!
-              </Text>
+              <Text className="text-white text-base font-extrabold text-center mb-2">No videos available</Text>
+              <Text className="text-zinc-500 text-xs text-center">Check back later or upload a new creation!</Text>
             </View>
           )}
         </View>
       ) : (
         <FlatList
+          ref={listRef}
           data={filteredVideos}
           keyExtractor={(item) => item.id}
-          renderItem={({ item }) => (
-            <VideoPost video={item} isActive={item.id === activeId} />
-          )}
-          pagingEnabled
+          renderItem={renderItem}
+          extraData={`${effectiveActiveId}-${isFocused}-${appActive}-${itemHeight}`}
           showsVerticalScrollIndicator={false}
           onViewableItemsChanged={onViewableItemsChanged}
           viewabilityConfig={viewabilityConfig}
           initialNumToRender={1}
           maxToRenderPerBatch={2}
           windowSize={3}
-          decelerationRate="fast"
-          snapToInterval={Dimensions.get('window').height - 60}
+          // removeClippedSubviews provoque des Ã©crans noirs avec les vidÃ©os sur Android.
+          removeClippedSubviews={false}
+          getItemLayout={getItemLayout}
+          snapToInterval={itemHeight}
           snapToAlignment="start"
+          decelerationRate="fast"
+          disableIntervalMomentum
+          overScrollMode="never"
+          bounces={false}
         />
       )}
 
-      {/* Simulated LIVE Broadcast modal */}
       <LiveStreamModal isVisible={showLive} onClose={() => setShowLive(false)} />
     </View>
   );

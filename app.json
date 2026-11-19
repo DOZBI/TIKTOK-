@@ -1,22 +1,21 @@
 {
   "expo": {
-    "name": "tiktok-clone",
+    "name": "BALTAZARE SEX",
     "slug": "tiktok-clone",
     "version": "1.0.0",
     "orientation": "portrait",
     "icon": "./assets/images/icon.png",
-    "scheme": "tiktokclone",
+    "scheme": "baltazaresex",
     "userInterfaceStyle": "automatic",
     "ios": {
       "icon": "./assets/images/icon.png"
     },
     "android": {
-      "package": "com.anthony242.tiktokclone",
+      "package": "com.baltazare.sex",
       "adaptiveIcon": {
-        "backgroundColor": "#E6F4FE",
-        "foregroundImage": "./assets/images/android-icon-foreground.png",
-        "backgroundImage": "./assets/images/android-icon-background.png",
-        "monochromeImage": "./assets/images/android-icon-monochrome.png"
+        "backgroundColor": "#000000",
+        "foregroundImage": "./assets/images/icon.png",
+        "monochromeImage": "./assets/images/icon.png"
       },
       "predictiveBackGestureEnabled": false,
       "permissions": [

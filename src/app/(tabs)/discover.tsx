@@ -9,18 +9,22 @@ const { width } = Dimensions.get('window');
 const GRID_ITEM_WIDTH = (width - 36) / 3; // 3 columns grid with margins
 
 export default function DiscoverScreen() {
-  const { videos } = useVideoStore();
+  const { videos, loadFeed } = useVideoStore();
   const router = useRouter();
   const [searchQuery, setSearchQuery] = useState('');
   const [activeTab, setActiveTab] = useState<'Top' | 'Users' | 'Videos'>('Top');
 
-  const trendingHashtags = [
-    { id: 'h1', tag: 'aesthetic', count: '4.2M views' },
-    { id: 'h2', tag: 'dance', count: '12.8M views' },
-    { id: 'h3', tag: 'skatelife', count: '1.5M views' },
-    { id: 'h4', tag: 'cyberpunk', count: '890K views' },
-    { id: 'h5', tag: 'sports', count: '5.1M views' },
-  ];
+  React.useEffect(() => { void loadFeed(); }, [loadFeed]);
+  const trendingHashtags = React.useMemo(() => {
+    const tags = new Map<string, number>();
+    videos.forEach((video) => {
+      (video.description.match(/#[\p{L}\d_]+/gu) ?? []).forEach((tag) => {
+        const key = tag.slice(1).toLowerCase();
+        tags.set(key, (tags.get(key) ?? 0) + video.views);
+      });
+    });
+    return [...tags.entries()].sort((a, b) => b[1] - a[1]).slice(0, 10).map(([tag, views], index) => ({ id: `${tag}-${index}`, tag, count: `${views.toLocaleString()} vues` }));
+  }, [videos]);
 
   const filteredVideos = videos.filter((video) =>
     video.username.toLowerCase().includes(searchQuery.toLowerCase()) ||
@@ -62,7 +66,7 @@ export default function DiscoverScreen() {
             <View className="mb-6">
               <View className="flex-row items-center mb-3">
                 <Flame size={18} color="#ff0050" className="mr-1.5" />
-                <Text className="text-white font-extrabold text-base">Trending Hashtags</Text>
+                <Text className="text-white font-extrabold text-base">Hashtags tendance</Text>
               </View>
           <ScrollView horizontal showsHorizontalScrollIndicator={false} className="flex-row">
             {trendingHashtags.map((item) => (
@@ -88,12 +92,12 @@ export default function DiscoverScreen() {
                     style={{ width: GRID_ITEM_WIDTH, height: GRID_ITEM_WIDTH * 1.4 }}
                     className="relative rounded-lg overflow-hidden bg-zinc-900"
                   >
-                    <Image source={{ uri: video.userAvatar }} className="w-full h-full object-cover" />
+                    <Image source={{ uri: video.thumbnailUrl || video.thumbnailUrlMedium || video.userAvatar || undefined }} className="w-full h-full object-cover" />
                     <View className="absolute bottom-1.5 left-1.5 right-1.5 flex-row items-center justify-between">
                       <View className="flex-row items-center">
                         <Play size={10} color="#ffffff" fill="#ffffff" className="mr-1" />
                         <Text className="text-white font-bold text-[9px] shadow-sm">
-                          {(video.likes / 10).toFixed(0)}
+                          {video.views.toLocaleString()}
                         </Text>
                       </View>
                     </View>
@@ -115,7 +119,7 @@ export default function DiscoverScreen() {
                     <Image source={{ uri: video.userAvatar }} className="w-12 h-12 rounded-full mr-4 border border-zinc-800" />
                     <View>
                       <Text className="text-white font-bold text-sm">{video.username}</Text>
-                      <Text className="text-zinc-500 text-xs mt-0.5">{(video.likes / 1000).toFixed(1)}K Followers</Text>
+                      <Text className="text-zinc-500 text-xs mt-0.5">{video.likes.toLocaleString()} Likes</Text>
                     </View>
                   </TouchableOpacity>
                 ))}
@@ -135,7 +139,7 @@ export default function DiscoverScreen() {
                       className="relative rounded-lg overflow-hidden bg-zinc-900"
                     >
                       <Animated.Image 
-                        source={{ uri: video.userAvatar }} 
+                        source={{ uri: video.thumbnailUrlMedium || video.thumbnailUrl || video.thumbnailUrlLow || video.userAvatar || undefined }}
                         className="w-full h-full object-cover" 
                         sharedTransitionTag={`thumbnail-${video.id}`}
                       />
@@ -143,7 +147,7 @@ export default function DiscoverScreen() {
                         <View className="flex-row items-center">
                           <Play size={10} color="#ffffff" fill="#ffffff" className="mr-1" />
                           <Text className="text-white font-bold text-[9px] shadow-sm">
-                            {(video.likes / 10).toFixed(0)}
+                            {video.views.toLocaleString()}
                           </Text>
                         </View>
                       </View>

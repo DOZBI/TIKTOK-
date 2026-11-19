@@ -11,6 +11,8 @@ import Animated, { useSharedValue, useAnimatedStyle, withTiming, runOnJS } from 
 import { useVideoStore } from '../store/useVideoStore';
 
 const filterNames = ['Normal', 'Cyberpunk', 'Noir', 'Sepia', 'Beauty'];
+const MAX_VIDEO_DURATION_MS = 3 * 60 * 1000;
+const MAX_VIDEO_SIZE_BYTES = 100 * 1024 * 1024;
 
 const filterColors = [
   'transparent',
@@ -112,6 +114,14 @@ export default function CameraScreen() {
 
     if (!result.canceled && result.assets && result.assets.length > 0) {
       const selectedVideo = result.assets[0];
+      if (selectedVideo.duration && selectedVideo.duration > MAX_VIDEO_DURATION_MS) {
+        Alert.alert('Vidéo trop longue', 'La durée maximale est de 3 minutes. Rognez la vidéo dans votre galerie puis réessayez.');
+        return;
+      }
+      if (selectedVideo.fileSize && selectedVideo.fileSize > MAX_VIDEO_SIZE_BYTES) {
+        Alert.alert('Vidéo trop lourde', 'La taille maximale autorisée est de 100 Mo.');
+        return;
+      }
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
       
       router.push({
@@ -133,7 +143,7 @@ export default function CameraScreen() {
 
     try {
       const videoRecordPromise = cameraRef.current?.recordAsync({
-        maxDuration: timerDuration > 0 ? timerDuration : undefined,
+        maxDuration: timerDuration > 0 ? Math.min(timerDuration, 600) : 600,
       });
       
       const video = await videoRecordPromise;

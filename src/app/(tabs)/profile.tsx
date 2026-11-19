@@ -9,7 +9,7 @@ const { width } = Dimensions.get('window');
 const GRID_ITEM_WIDTH = (width - 32) / 3;
 
 export default function ProfileScreen() {
-  const { videos, currentUser, updateProfile, isLoggedIn, setShowAuthModal } = useVideoStore();
+  const { videos, currentUser, updateProfile, isLoggedIn, setShowAuthModal, logout } = useVideoStore();
   const router = useRouter();
   const [activeTab, setActiveTab] = useState<'public' | 'private' | 'liked'>('public');
   const [showEditModal, setShowEditModal] = useState(false);
@@ -19,15 +19,15 @@ export default function ProfileScreen() {
   const [name, setName] = useState(currentUser.name);
 
   const userStats = {
-    following: '184',
-    followers: '25.6K',
-    likes: '452.8K',
+    following: currentUser.followingCount.toLocaleString(),
+    followers: currentUser.followersCount.toLocaleString(),
+    likes: currentUser.likesCount.toLocaleString(),
     avatar: currentUser.avatar,
   };
 
   // Group videos for tabs
-  const publicVideos = videos; // For mockup, show all videos in public tab
-  const privateVideos = videos.slice(2); // Show subset in private
+  const publicVideos = videos.filter((video) => video.authorId === currentUser.id && video.visibility !== 'private');
+  const privateVideos = videos.filter((video) => video.authorId === currentUser.id && video.visibility === 'private');
   const likedVideos = videos.filter((vid) => vid.isLiked); // Filter by liked videos
 
   const getActiveTabVideos = () => {
@@ -93,6 +93,12 @@ export default function ProfileScreen() {
               <Edit2 size={14} color="#ffffff" />
               <Text className="text-white font-bold text-xs">Edit Profile</Text>
             </TouchableOpacity>
+            <TouchableOpacity
+              onPress={async () => { await logout(); router.replace('/'); }}
+              className="flex-1 bg-zinc-900 border border-zinc-800 py-2.5 rounded-xl items-center justify-center"
+            >
+              <Text className="text-red-400 font-bold text-xs">Déconnexion</Text>
+            </TouchableOpacity>
           </View>
 
           {/* Bio Description */}
@@ -144,13 +150,13 @@ export default function ProfileScreen() {
                 className="relative bg-zinc-900"
               >
                 <Animated.Image
-                  source={{ uri: video.userAvatar }}
+                  source={{ uri: video.thumbnailUrl || video.thumbnailUrlMedium || video.userAvatar || undefined }}
                   className="w-full h-full object-cover"
                   sharedTransitionTag={`thumbnail-${video.id}`}
                 />
                 <View className="absolute bottom-1.5 left-1.5 flex-row items-center">
                   <Play size={10} color="#ffffff" fill="#ffffff" className="mr-1" />
-                  <Text className="text-white text-[9px] font-bold">{(video.likes / 10).toFixed(0)}</Text>
+                  <Text className="text-white text-[9px] font-bold">{video.views.toLocaleString()}</Text>
                 </View>
               </TouchableOpacity>
             ))

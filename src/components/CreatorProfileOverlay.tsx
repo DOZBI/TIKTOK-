@@ -74,9 +74,9 @@ export default function CreatorProfileOverlay({
   const likedVideos = videos.filter((vid) => vid.isLiked);
 
   const stats = {
-    following: '124',
-    followers: isFollowing ? '4.8M' : '4.7M',
-    likes: '89.4M',
+    following: (creatorVideos[0]?.authorStats?.following ?? 0).toLocaleString(),
+    followers: (creatorVideos[0]?.authorStats?.followers ?? 0).toLocaleString(),
+    likes: (creatorVideos[0]?.authorStats?.likes ?? 0).toLocaleString(),
     bio: `Official account of @${username}. Creative short-form content. Business: contact@${username}.com 💌✨`,
   };
 
@@ -200,10 +200,10 @@ export default function CreatorProfileOverlay({
                     style={{ width: (width - 20) / 3, height: ((width - 20) / 3) * 1.4 }}
                     className="bg-zinc-900 m-[1px] relative"
                   >
-                    <Image source={{ uri: video.userAvatar }} className="w-full h-full object-cover" />
+                    <Image source={{ uri: video.thumbnailUrl ?? video.userAvatar }} className="w-full h-full object-cover" />
                     <View className="absolute bottom-1.5 left-1.5 flex-row items-center">
                       <Play size={10} color="#ffffff" fill="#ffffff" className="mr-1" />
-                      <Text className="text-white text-[9px] font-bold">{(video.likes / 10).toFixed(0)}</Text>
+                      <Text className="text-white text-[9px] font-bold">{video.views.toLocaleString()}</Text>
                     </View>
                   </View>
                 ))
@@ -221,10 +221,10 @@ export default function CreatorProfileOverlay({
                     style={{ width: (width - 20) / 3, height: ((width - 20) / 3) * 1.4 }}
                     className="bg-zinc-900 m-[1px] relative"
                   >
-                    <Image source={{ uri: video.userAvatar }} className="w-full h-full object-cover" />
+                    <Image source={{ uri: video.thumbnailUrl ?? video.userAvatar }} className="w-full h-full object-cover" />
                     <View className="absolute bottom-1.5 left-1.5 flex-row items-center">
                       <Play size={10} color="#ffffff" fill="#ffffff" className="mr-1" />
-                      <Text className="text-white text-[9px] font-bold">{(video.likes / 10).toFixed(0)}</Text>
+                      <Text className="text-white text-[9px] font-bold">{video.views.toLocaleString()}</Text>
                     </View>
                   </View>
                 ))

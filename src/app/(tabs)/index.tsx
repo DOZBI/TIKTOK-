@@ -1,5 +1,5 @@
-﻿import React, { useState, useRef, useEffect, useCallback, useMemo } from 'react';
-import { FlatList, View, Text, StatusBar, TouchableOpacity, AppState, useWindowDimensions, LayoutChangeEvent, ActivityIndicator } from 'react-native';
+import React, { useState, useRef, useEffect, useCallback, useMemo } from 'react';
+import { FlatList, View, Text, StatusBar, TouchableOpacity, AppState, useWindowDimensions, LayoutChangeEvent, ActivityIndicator, Image, NativeSyntheticEvent, NativeScrollEvent } from 'react-native';
 import { useFocusEffect } from 'expo-router';
 import { useVideoStore } from '../../store/useVideoStore';
 import VideoPost from '../../components/VideoPost';
@@ -8,9 +8,12 @@ import { pauseAll } from '../../lib/playbackManager';
 import { Users, Sparkles, Tv } from 'lucide-react-native';
 
 const TAB_BAR_HEIGHT = 60;
+const PREFETCH_POSTERS = 3;
 
 export default function HomeFeed() {
-  const { videos, hiddenVideoIds, isFeedLoading } = useVideoStore();
+  const videos = useVideoStore((state) => state.videos);
+  const hiddenVideoIds = useVideoStore((state) => state.hiddenVideoIds);
+  const isFeedLoading = useVideoStore((state) => state.isFeedLoading);
   const { height: windowHeight } = useWindowDimensions();
   const [feedHeight, setFeedHeight] = useState(0);
   const fallbackItemHeight = Math.max(windowHeight - TAB_BAR_HEIGHT, 1);
@@ -24,7 +27,8 @@ export default function HomeFeed() {
   }, []);
 
   const [feedType, setFeedType] = useState<'following' | 'foryou'>('foryou');
-  const [activeId, setActiveId] = useState<string>('');
+  const [activeIndex, setActiveIndex] = useState(0);
+  const activeIndexRef = useRef(0);
   const [showLive, setShowLive] = useState<boolean>(false);
   const [appActive, setAppActive] = useState(AppState.currentState === 'active');
   const [isFocused, setIsFocused] = useState(true);
@@ -63,36 +67,42 @@ export default function HomeFeed() {
   );
 
   // Une seule vidÃ©o active : celle visible, sinon la premiÃ¨re de la liste.
-  const effectiveActiveId = filteredVideos.some((v) => v.id === activeId)
-    ? activeId
-    : filteredVideos[0]?.id ?? '';
+  const safeIndex = Math.min(activeIndex, Math.max(filteredVideos.length - 1, 0));
 
   // Retour en haut quand on change d'onglet.
   useEffect(() => {
-    setActiveId('');
+    activeIndexRef.current = 0;
+    setActiveIndex(0);
     listRef.current?.scrollToOffset({ offset: 0, animated: false });
   }, [feedType]);
 
-  const viewabilityConfig = useRef({
-    itemVisiblePercentThreshold: 80,
-    minimumViewTime: 80,
-  }).current;
+  const onScroll = useCallback((event: NativeSyntheticEvent<NativeScrollEvent>) => {
+    const nextIndex = Math.round(event.nativeEvent.contentOffset.y / itemHeight);
+    if (nextIndex >= 0 && nextIndex !== activeIndexRef.current) {
+      activeIndexRef.current = nextIndex;
+      setActiveIndex(nextIndex);
+    }
+  }, [itemHeight]);
 
-  const onViewableItemsChanged = useRef(({ viewableItems }: any) => {
-    // On garde exactement un item : celui avec l'index le plus proche de l'Ã©cran.
-    const first = viewableItems.find((v: any) => v.isViewable);
-    if (first?.item?.id) setActiveId(first.item.id);
-  }).current;
+  useEffect(() => {
+    for (let offset = 1; offset <= PREFETCH_POSTERS; offset += 1) {
+      const nextVideo = filteredVideos[safeIndex + offset];
+      const poster = nextVideo?.thumbnailUrlMedium || nextVideo?.thumbnailUrl || nextVideo?.thumbnailUrlLow;
+      if (poster) void Image.prefetch(poster).catch(() => {});
+    }
+  }, [filteredVideos, safeIndex]);
+
 
   const renderItem = useCallback(
-    ({ item }: { item: any }) => (
+    ({ item, index }: { item: any; index: number }) => (
       <VideoPost
         video={item}
         height={itemHeight}
-        isActive={item.id === effectiveActiveId && isFocused && appActive}
+        isActive={index === safeIndex && isFocused && appActive}
+        shouldPreload={index === safeIndex + 1 && isFocused && appActive}
       />
     ),
-    [effectiveActiveId, isFocused, appActive, itemHeight]
+    [safeIndex, isFocused, appActive, itemHeight]
   );
 
   const getItemLayout = useCallback(
@@ -175,20 +185,19 @@ export default function HomeFeed() {
           data={filteredVideos}
           keyExtractor={(item) => item.id}
           renderItem={renderItem}
-          extraData={`${effectiveActiveId}-${isFocused}-${appActive}-${itemHeight}`}
+          extraData={`${safeIndex}-${isFocused}-${appActive}-${itemHeight}`}
           showsVerticalScrollIndicator={false}
-          onViewableItemsChanged={onViewableItemsChanged}
-          viewabilityConfig={viewabilityConfig}
-          initialNumToRender={1}
+          onScroll={onScroll}
+          scrollEventThrottle={16}
+          pagingEnabled
+          decelerationRate="fast"
+          initialNumToRender={2}
           maxToRenderPerBatch={2}
-          windowSize={3}
+          updateCellsBatchingPeriod={30}
+          windowSize={5}
           // removeClippedSubviews provoque des Ã©crans noirs avec les vidÃ©os sur Android.
           removeClippedSubviews={false}
           getItemLayout={getItemLayout}
-          snapToInterval={itemHeight}
-          snapToAlignment="start"
-          decelerationRate="fast"
-          disableIntervalMomentum
           overScrollMode="never"
           bounces={false}
         />

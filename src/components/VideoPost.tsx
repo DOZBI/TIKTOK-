@@ -1,6 +1,5 @@
-﻿import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
+import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { View, Text, StyleSheet, Image, Dimensions, TouchableOpacity, Pressable, Modal, ScrollView, TextInput, Alert, ActivityIndicator, LayoutChangeEvent } from 'react-native';
-import { useVideoPlayer, VideoView } from 'expo-video';
 import { Heart, MessageCircle, Share2, Plus, Music, Send, X, Bookmark, EyeOff, AlertTriangle, Download, Columns, Camera, Send as DirectMessageIcon } from 'lucide-react-native';
 import Animated, { useSharedValue, useAnimatedStyle, withRepeat, withTiming, Easing, cancelAnimation, runOnJS } from 'react-native-reanimated';
 import { Gesture, GestureDetector } from 'react-native-gesture-handler';
@@ -8,10 +7,11 @@ import * as Haptics from 'expo-haptics';
 import { useVideoStore, VideoPost as VideoPostType } from '../store/useVideoStore';
 import CreatorProfileOverlay from './CreatorProfileOverlay';
 import SoundDetailOverlay from './SoundDetailOverlay';
-import { claimPlayback, releasePlayback } from '../lib/playbackManager';
+import { claimPlayback } from '../lib/playbackManager';
 import { getNetworkQuality, resolveVideoSource } from '../lib/adaptiveSource';
 import { useRouter } from 'expo-router';
 import { getOrCreateConversation } from '../lib/messaging';
+import VideoSurface from './VideoSurface';
 
 const { width } = Dimensions.get('window');
 
@@ -19,82 +19,7 @@ interface VideoPostItemProps {
   video: VideoPostType;
   isActive: boolean;
   height: number;
-}
-
-/**
- * MontÃ© UNIQUEMENT pour la vidÃ©o active. Quand l'utilisateur scrolle, ce
- * composant est dÃ©montÃ© : le lecteur est mis en pause puis libÃ©rÃ©, donc deux
- * vidÃ©os ne peuvent jamais jouer en mÃªme temps.
- */
-function VideoSurface({
-  source,
-  shouldPlay,
-  onReady,
-}: {
-  source: any;
-  shouldPlay: boolean;
-  onReady: (player: any | null) => void;
-}) {
-  const [hasFrame, setHasFrame] = useState(false);
-  const [buffering, setBuffering] = useState(true);
-
-  const player = useVideoPlayer(source, (p) => {
-    p.loop = true;
-    p.muted = false;
-    // Garde un peu d'avance en mÃ©moire tampon pour Ã©viter les coupures.
-    try {
-      (p as any).bufferOptions = { preferredForwardBufferDuration: 6, waitsToMinimizeStalling: true };
-    } catch {
-      // option non disponible sur cette version d'expo-video
-    }
-  });
-
-  useEffect(() => {
-    onReady(player);
-    return () => {
-      try {
-        player.pause();
-      } catch {
-        // dÃ©jÃ  libÃ©rÃ©
-      }
-      releasePlayback(player);
-      onReady(null);
-    };
-  }, [onReady, player]);
-
-  useEffect(() => {
-    const sub = player.addListener('statusChange', ({ status }: any) => {
-      setBuffering(status === 'loading');
-    });
-    return () => sub.remove();
-  }, [player]);
-
-  useEffect(() => {
-    if (shouldPlay) {
-      claimPlayback(player); // met en pause tout autre lecteur
-      player.play();
-    } else {
-      player.pause();
-    }
-  }, [player, shouldPlay]);
-
-  return (
-    <>
-      <VideoView
-        player={player}
-        style={{ width: '100%', height: '100%', opacity: hasFrame ? 1 : 0 }}
-        contentFit="cover"
-        surfaceType="textureView"
-        nativeControls={false}
-        onFirstFrameRender={() => setHasFrame(true)}
-      />
-      {buffering && (
-        <View style={styles.centerLoader} pointerEvents="none">
-          <ActivityIndicator color="#ffffff" />
-        </View>
-      )}
-    </>
-  );
+  shouldPreload?: boolean;
 }
 
 function FloatingHeart({ x, y, onComplete }: { x: number; y: number; onComplete: () => void }) {
@@ -128,9 +53,16 @@ function FloatingHeart({ x, y, onComplete }: { x: number; y: number; onComplete:
   );
 }
 
-function VideoPost({ video, isActive, height }: VideoPostItemProps) {
+function VideoPost({ video, isActive, height, shouldPreload = false }: VideoPostItemProps) {
   const router = useRouter();
-  const { toggleLike, toggleFollow, addComment, hideVideo, toggleCommentLike, replyToComment, isLoggedIn, setShowAuthModal } = useVideoStore();
+  const toggleLike = useVideoStore((state) => state.toggleLike);
+  const toggleFollow = useVideoStore((state) => state.toggleFollow);
+  const addComment = useVideoStore((state) => state.addComment);
+  const hideVideo = useVideoStore((state) => state.hideVideo);
+  const toggleCommentLike = useVideoStore((state) => state.toggleCommentLike);
+  const replyToComment = useVideoStore((state) => state.replyToComment);
+  const isLoggedIn = useVideoStore((state) => state.isLoggedIn);
+  const setShowAuthModal = useVideoStore((state) => state.setShowAuthModal);
   const [showComments, setShowComments] = useState(false);
   const [showOptions, setShowOptions] = useState(false);
   const [isProfileVisible, setIsProfileVisible] = useState(false);
@@ -152,11 +84,14 @@ function VideoPost({ video, isActive, height }: VideoPostItemProps) {
 
   // Format choisi au moment oÃ¹ la vidÃ©o devient active (pas de redÃ©marrage si
   // le rÃ©seau fluctue pendant la lecture). RÃ©seau faible => variante "low".
-  const source = useMemo(
-    () => resolveVideoSource(video.videoUrl, getNetworkQuality()),
+  const mounted = isActive || shouldPreload;
+  const source = useMemo(() => {
+    const resolvedSource = resolveVideoSource(video.videoUrl, getNetworkQuality());
+    if (typeof resolvedSource === 'string') return { uri: resolvedSource, useCaching: true };
+    if (resolvedSource && typeof resolvedSource === 'object') return { ...resolvedSource, useCaching: true };
+    return resolvedSource;
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [video.videoUrl, isActive]
-  );
+  }, [video.videoUrl, mounted]);
 
   const poster = video.thumbnailUrlMedium || video.thumbnailUrl || video.thumbnailUrlLow;
 
@@ -379,11 +314,12 @@ function VideoPost({ video, isActive, height }: VideoPostItemProps) {
               delayLongPress={500}
             >
               <Animated.View style={StyleSheet.absoluteFill}>
-                {isActive && (
+                {mounted && (
                   <VideoSurface
                     key={video.id}
                     source={source}
                     shouldPlay={shouldPlay}
+                    isActive={isActive}
                     onReady={handlePlayerReady}
                   />
                 )}
@@ -695,16 +631,4 @@ function VideoPost({ video, isActive, height }: VideoPostItemProps) {
   );
 }
 
-const styles = StyleSheet.create({
-  centerLoader: {
-    position: 'absolute', top: 0, left: 0, right: 0, bottom: 0,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-});
-
-export default React.memo(
-  VideoPost,
-  (previous, next) =>
-    previous.video === next.video && previous.isActive === next.isActive && previous.height === next.height
-);
+export default React.memo(VideoPost);

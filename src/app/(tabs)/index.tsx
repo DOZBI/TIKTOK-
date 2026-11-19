@@ -1,5 +1,6 @@
-import React, { useState, useEffect, useCallback, useMemo } from 'react';
+import React, { useState, useRef, useEffect, useCallback, useMemo } from 'react';
 import {
+  FlatList,
   View,
   Text,
   StatusBar,
@@ -9,17 +10,10 @@ import {
   LayoutChangeEvent,
   ActivityIndicator,
   Image,
+  NativeSyntheticEvent,
+  NativeScrollEvent,
 } from 'react-native';
 import { useFocusEffect } from 'expo-router';
-import Animated, {
-  useSharedValue,
-  useAnimatedStyle,
-  useAnimatedReaction,
-  withSpring,
-  cancelAnimation,
-  runOnJS,
-} from 'react-native-reanimated';
-import { Gesture, GestureDetector } from 'react-native-gesture-handler';
 import { useVideoStore } from '../../store/useVideoStore';
 import VideoPost from '../../components/VideoPost';
 import LiveStreamModal from '../../components/LiveStreamModal';
@@ -27,46 +21,15 @@ import { pauseAll } from '../../lib/playbackManager';
 import { Users, Sparkles, Tv } from 'lucide-react-native';
 
 const TAB_BAR_HEIGHT = 60;
+// Nombre de miniatures préchargées devant l'utilisateur.
 const PREFETCH_POSTERS = 3;
 
-// Réglages du "feeling" Shorts : à ajuster si besoin.
-const SWIPE_DISTANCE_RATIO = 0.15; // % de la hauteur à dépasser pour changer de vidéo
-const SWIPE_VELOCITY = 500; // px/s : un petit geste rapide suffit aussi
-const EDGE_RESISTANCE = 0.3; // effet élastique sur la première/dernière vidéo
-
-/**
- * Une page du pager. Sa position dépend uniquement de `position` (index continu,
- * ex. 1.4 = entre la vidéo 1 et la vidéo 2) : tout est animé sur le thread UI,
- * sans re-render React pendant le geste.
- */
-function PagerItem({
-  index,
-  position,
-  height,
-  children,
-}: {
-  index: number;
-  position: Animated.SharedValue<number>;
-  height: number;
-  children: React.ReactNode;
-}) {
-  const animatedStyle = useAnimatedStyle(() => ({
-    transform: [{ translateY: (index - position.value) * height }],
-  }));
-
-  return (
-    <Animated.View
-      style={[{ position: 'absolute', top: 0, left: 0, right: 0, height }, animatedStyle]}
-    >
-      {children}
-    </Animated.View>
-  );
-}
-
 export default function HomeFeed() {
-  const videos = useVideoStore((state) => state.videos);
-  const hiddenVideoIds = useVideoStore((state) => state.hiddenVideoIds);
-  const isFeedLoading = useVideoStore((state) => state.isFeedLoading);
+  // Sélecteurs séparés : le feed ne se re-render plus à chaque changement du store.
+  const videos = useVideoStore((s) => s.videos);
+  const hiddenVideoIds = useVideoStore((s) => s.hiddenVideoIds);
+  const isFeedLoading = useVideoStore((s) => s.isFeedLoading);
+
   const { height: windowHeight } = useWindowDimensions();
   const [feedHeight, setFeedHeight] = useState(0);
   const fallbackItemHeight = Math.max(windowHeight - TAB_BAR_HEIGHT, 1);
@@ -81,13 +44,10 @@ export default function HomeFeed() {
 
   const [feedType, setFeedType] = useState<'following' | 'foryou'>('foryou');
   const [activeIndex, setActiveIndex] = useState(0);
+  const activeIndexRef = useRef(0);
   const [showLive, setShowLive] = useState<boolean>(false);
   const [appActive, setAppActive] = useState(AppState.currentState === 'active');
   const [isFocused, setIsFocused] = useState(true);
-
-  // Index continu du pager (thread UI) et position au début du geste.
-  const position = useSharedValue(0);
-  const startPosition = useSharedValue(0);
 
   useFocusEffect(
     useCallback(() => {
@@ -98,6 +58,7 @@ export default function HomeFeed() {
       };
     }, [])
   );
+  const listRef = useRef<FlatList<any>>(null);
 
   // Pause quand l'app passe en arrière-plan.
   useEffect(() => {
@@ -109,11 +70,6 @@ export default function HomeFeed() {
     return () => sub.remove();
   }, []);
 
-  // Pause quand on quitte l'onglet.
-  useEffect(() => {
-    if (!isFocused) pauseAll();
-  }, [isFocused]);
-
   const filteredVideos = useMemo(
     () =>
       videos.filter(
@@ -122,87 +78,55 @@ export default function HomeFeed() {
     [videos, hiddenVideoIds, feedType]
   );
 
-  const count = filteredVideos.length;
-  const safeIndex = Math.min(activeIndex, Math.max(count - 1, 0));
+  const safeIndex = Math.min(activeIndex, Math.max(filteredVideos.length - 1, 0));
 
   // Retour en haut quand on change d'onglet.
   useEffect(() => {
-    cancelAnimation(position);
-    position.value = 0;
+    activeIndexRef.current = 0;
     setActiveIndex(0);
-  }, [feedType, position]);
+    listRef.current?.scrollToOffset({ offset: 0, animated: false });
+  }, [feedType]);
 
-  // Si la liste raccourcit (vidéo masquée en fin de liste), on reste dans les bornes.
-  useEffect(() => {
-    const max = Math.max(count - 1, 0);
-    if (activeIndex > max) {
-      cancelAnimation(position);
-      position.value = max;
-      setActiveIndex(max);
-    }
-  }, [count, activeIndex, position]);
-
-  // La vidéo active change dès que l'on passe 50 % : lecture immédiate.
-  useAnimatedReaction(
-    () => Math.round(position.value),
-    (current, previous) => {
-      if (current !== previous) runOnJS(setActiveIndex)(current);
-    }
-  );
-
-  // Pan vertical : un geste = au plus UNE vidéo (précédente ou suivante).
-  const panGesture = useMemo(
-    () =>
-      Gesture.Pan()
-        .activeOffsetY([-12, 12])
-        .failOffsetX([-20, 20]) // le swipe horizontal (profil) reste géré par VideoPost
-        .onStart(() => {
-          cancelAnimation(position);
-          startPosition.value = position.value;
-        })
-        .onUpdate((event) => {
-          const maxIndex = Math.max(count - 1, 0);
-          let next = startPosition.value - event.translationY / itemHeight;
-          if (next < 0) next = next * EDGE_RESISTANCE;
-          else if (next > maxIndex) next = maxIndex + (next - maxIndex) * EDGE_RESISTANCE;
-          position.value = next;
-        })
-        .onEnd((event) => {
-          const maxIndex = Math.max(count - 1, 0);
-          const base = Math.round(startPosition.value);
-          let target = base;
-          if (event.translationY < -itemHeight * SWIPE_DISTANCE_RATIO || event.velocityY < -SWIPE_VELOCITY) {
-            target = base + 1;
-          } else if (event.translationY > itemHeight * SWIPE_DISTANCE_RATIO || event.velocityY > SWIPE_VELOCITY) {
-            target = base - 1;
-          }
-          target = Math.min(Math.max(target, 0), maxIndex);
-
-          position.value = withSpring(target, {
-            damping: 28,
-            stiffness: 260,
-            mass: 1,
-            overshootClamping: true,
-            velocity: -event.velocityY / itemHeight,
-          });
-        }),
-    [count, itemHeight, position, startPosition]
+  // La vidéo active change dès que l'on dépasse 50 % de l'écran (au lieu
+  // d'attendre 80 % + 80 ms avec onViewableItemsChanged) : lecture plus réactive.
+  const onScroll = useCallback(
+    (e: NativeSyntheticEvent<NativeScrollEvent>) => {
+      const index = Math.round(e.nativeEvent.contentOffset.y / itemHeight);
+      if (index >= 0 && index !== activeIndexRef.current) {
+        activeIndexRef.current = index;
+        setActiveIndex(index);
+      }
+    },
+    [itemHeight]
   );
 
   // Précharge les miniatures des prochaines vidéos.
   useEffect(() => {
-    for (let offset = 1; offset <= PREFETCH_POSTERS; offset += 1) {
-      const nextVideo = filteredVideos[safeIndex + offset];
-      const poster = nextVideo?.thumbnailUrlMedium || nextVideo?.thumbnailUrl || nextVideo?.thumbnailUrlLow;
-      if (poster) void Image.prefetch(poster).catch(() => {});
+    for (let i = 1; i <= PREFETCH_POSTERS; i++) {
+      const v = filteredVideos[safeIndex + i];
+      const uri = v?.thumbnailUrlMedium || v?.thumbnailUrl || v?.thumbnailUrlLow;
+      if (uri) Image.prefetch(uri).catch(() => {});
     }
-  }, [filteredVideos, safeIndex]);
+  }, [safeIndex, filteredVideos]);
 
-  // Fenêtre de 3 pages montées : précédente, courante, suivante.
-  const windowIndexes: number[] = [];
-  for (let i = Math.max(safeIndex - 1, 0); i <= Math.min(safeIndex + 1, count - 1); i += 1) {
-    windowIndexes.push(i);
-  }
+  const renderItem = useCallback(
+    ({ item, index }: { item: any; index: number }) => (
+      <VideoPost
+        video={item}
+        height={itemHeight}
+        isActive={index === safeIndex && isFocused && appActive}
+        // La vidéo suivante est montée en pause : elle se charge pendant que
+        // l'on regarde la vidéo courante, donc elle démarre instantanément.
+        shouldPreload={index === safeIndex + 1}
+      />
+    ),
+    [safeIndex, isFocused, appActive, itemHeight]
+  );
+
+  const getItemLayout = useCallback(
+    (_: any, index: number) => ({ length: itemHeight, offset: itemHeight * index, index }),
+    [itemHeight]
+  );
 
   return (
     <View className="flex-1 bg-black" onLayout={handleFeedLayout}>
@@ -246,7 +170,7 @@ export default function HomeFeed() {
             </View>
           </View>
         </View>
-      ) : count === 0 ? (
+      ) : filteredVideos.length === 0 ? (
         <View className="flex-1 justify-center items-center bg-black px-8">
           {feedType === 'following' ? (
             <View className="items-center">
@@ -274,23 +198,31 @@ export default function HomeFeed() {
           )}
         </View>
       ) : (
-        <GestureDetector gesture={panGesture}>
-          <Animated.View style={{ flex: 1, overflow: 'hidden' }} collapsable={false}>
-            {windowIndexes.map((index) => {
-              const video = filteredVideos[index];
-              return (
-                <PagerItem key={video.id} index={index} position={position} height={itemHeight}>
-                  <VideoPost
-                    video={video}
-                    height={itemHeight}
-                    isActive={index === safeIndex && isFocused && appActive}
-                    shouldPreload={index === safeIndex + 1 && isFocused && appActive}
-                  />
-                </PagerItem>
-              );
-            })}
-          </Animated.View>
-        </GestureDetector>
+        <FlatList
+          ref={listRef}
+          data={filteredVideos}
+          keyExtractor={(item) => item.id}
+          renderItem={renderItem}
+          extraData={`${safeIndex}-${isFocused}-${appActive}-${itemHeight}`}
+          showsVerticalScrollIndicator={false}
+          onScroll={onScroll}
+          scrollEventThrottle={16}
+          // Un swipe = une seule vidéo, même si le geste est très rapide :
+          // disableIntervalMomentum empêche l'élan de dépasser le cran suivant.
+          snapToInterval={itemHeight}
+          snapToAlignment="start"
+          disableIntervalMomentum
+          decelerationRate="fast"
+          getItemLayout={getItemLayout}
+          initialNumToRender={2}
+          maxToRenderPerBatch={2}
+          updateCellsBatchingPeriod={30}
+          windowSize={5}
+          // removeClippedSubviews provoque des écrans noirs avec les vidéos sur Android.
+          removeClippedSubviews={false}
+          overScrollMode="never"
+          bounces={false}
+        />
       )}
 
       <LiveStreamModal isVisible={showLive} onClose={() => setShowLive(false)} />

@@ -1,17 +1,69 @@
-import React, { useState, useRef, useEffect, useCallback, useMemo } from 'react';
-import { FlatList, View, Text, StatusBar, TouchableOpacity, AppState, useWindowDimensions, LayoutChangeEvent, ActivityIndicator, Image, NativeSyntheticEvent, NativeScrollEvent } from 'react-native';
-import { useFocusEffect, useRouter } from 'expo-router';
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
+import {
+  View,
+  Text,
+  StatusBar,
+  TouchableOpacity,
+  AppState,
+  useWindowDimensions,
+  LayoutChangeEvent,
+  ActivityIndicator,
+  Image,
+} from 'react-native';
+import { useFocusEffect } from 'expo-router';
+import Animated, {
+  useSharedValue,
+  useAnimatedStyle,
+  useAnimatedReaction,
+  withSpring,
+  cancelAnimation,
+  runOnJS,
+} from 'react-native-reanimated';
+import { Gesture, GestureDetector } from 'react-native-gesture-handler';
 import { useVideoStore } from '../../store/useVideoStore';
 import VideoPost from '../../components/VideoPost';
 import LiveStreamModal from '../../components/LiveStreamModal';
 import { pauseAll } from '../../lib/playbackManager';
-import { Users, Sparkles, Tv, Shield } from 'lucide-react-native';
+import { Users, Sparkles, Tv } from 'lucide-react-native';
 
 const TAB_BAR_HEIGHT = 60;
 const PREFETCH_POSTERS = 3;
 
+// Réglages du "feeling" Shorts : à ajuster si besoin.
+const SWIPE_DISTANCE_RATIO = 0.15; // % de la hauteur à dépasser pour changer de vidéo
+const SWIPE_VELOCITY = 500; // px/s : un petit geste rapide suffit aussi
+const EDGE_RESISTANCE = 0.3; // effet élastique sur la première/dernière vidéo
+
+/**
+ * Une page du pager. Sa position dépend uniquement de `position` (index continu,
+ * ex. 1.4 = entre la vidéo 1 et la vidéo 2) : tout est animé sur le thread UI,
+ * sans re-render React pendant le geste.
+ */
+function PagerItem({
+  index,
+  position,
+  height,
+  children,
+}: {
+  index: number;
+  position: Animated.SharedValue<number>;
+  height: number;
+  children: React.ReactNode;
+}) {
+  const animatedStyle = useAnimatedStyle(() => ({
+    transform: [{ translateY: (index - position.value) * height }],
+  }));
+
+  return (
+    <Animated.View
+      style={[{ position: 'absolute', top: 0, left: 0, right: 0, height }, animatedStyle]}
+    >
+      {children}
+    </Animated.View>
+  );
+}
+
 export default function HomeFeed() {
-  const router = useRouter();
   const videos = useVideoStore((state) => state.videos);
   const hiddenVideoIds = useVideoStore((state) => state.hiddenVideoIds);
   const isFeedLoading = useVideoStore((state) => state.isFeedLoading);
@@ -23,16 +75,20 @@ export default function HomeFeed() {
   const handleFeedLayout = useCallback((event: LayoutChangeEvent) => {
     const nextHeight = Math.round(event.nativeEvent.layout.height);
     if (nextHeight > 0) {
-      setFeedHeight((currentHeight) => currentHeight === nextHeight ? currentHeight : nextHeight);
+      setFeedHeight((currentHeight) => (currentHeight === nextHeight ? currentHeight : nextHeight));
     }
   }, []);
 
   const [feedType, setFeedType] = useState<'following' | 'foryou'>('foryou');
   const [activeIndex, setActiveIndex] = useState(0);
-  const activeIndexRef = useRef(0);
   const [showLive, setShowLive] = useState<boolean>(false);
   const [appActive, setAppActive] = useState(AppState.currentState === 'active');
   const [isFocused, setIsFocused] = useState(true);
+
+  // Index continu du pager (thread UI) et position au début du geste.
+  const position = useSharedValue(0);
+  const startPosition = useSharedValue(0);
+
   useFocusEffect(
     useCallback(() => {
       setIsFocused(true);
@@ -42,9 +98,8 @@ export default function HomeFeed() {
       };
     }, [])
   );
-  const listRef = useRef<FlatList<any>>(null);
 
-  // Pause quand l'app passe en arriÃ¨re-plan.
+  // Pause quand l'app passe en arrière-plan.
   useEffect(() => {
     const sub = AppState.addEventListener('change', (state) => {
       const active = state === 'active';
@@ -67,24 +122,74 @@ export default function HomeFeed() {
     [videos, hiddenVideoIds, feedType]
   );
 
-  // Une seule vidÃ©o active : celle visible, sinon la premiÃ¨re de la liste.
-  const safeIndex = Math.min(activeIndex, Math.max(filteredVideos.length - 1, 0));
+  const count = filteredVideos.length;
+  const safeIndex = Math.min(activeIndex, Math.max(count - 1, 0));
 
   // Retour en haut quand on change d'onglet.
   useEffect(() => {
-    activeIndexRef.current = 0;
+    cancelAnimation(position);
+    position.value = 0;
     setActiveIndex(0);
-    listRef.current?.scrollToOffset({ offset: 0, animated: false });
-  }, [feedType]);
+  }, [feedType, position]);
 
-  const onScroll = useCallback((event: NativeSyntheticEvent<NativeScrollEvent>) => {
-    const nextIndex = Math.round(event.nativeEvent.contentOffset.y / itemHeight);
-    if (nextIndex >= 0 && nextIndex !== activeIndexRef.current) {
-      activeIndexRef.current = nextIndex;
-      setActiveIndex(nextIndex);
+  // Si la liste raccourcit (vidéo masquée en fin de liste), on reste dans les bornes.
+  useEffect(() => {
+    const max = Math.max(count - 1, 0);
+    if (activeIndex > max) {
+      cancelAnimation(position);
+      position.value = max;
+      setActiveIndex(max);
     }
-  }, [itemHeight]);
+  }, [count, activeIndex, position]);
 
+  // La vidéo active change dès que l'on passe 50 % : lecture immédiate.
+  useAnimatedReaction(
+    () => Math.round(position.value),
+    (current, previous) => {
+      if (current !== previous) runOnJS(setActiveIndex)(current);
+    }
+  );
+
+  // Pan vertical : un geste = au plus UNE vidéo (précédente ou suivante).
+  const panGesture = useMemo(
+    () =>
+      Gesture.Pan()
+        .activeOffsetY([-12, 12])
+        .failOffsetX([-20, 20]) // le swipe horizontal (profil) reste géré par VideoPost
+        .onStart(() => {
+          cancelAnimation(position);
+          startPosition.value = position.value;
+        })
+        .onUpdate((event) => {
+          const maxIndex = Math.max(count - 1, 0);
+          let next = startPosition.value - event.translationY / itemHeight;
+          if (next < 0) next = next * EDGE_RESISTANCE;
+          else if (next > maxIndex) next = maxIndex + (next - maxIndex) * EDGE_RESISTANCE;
+          position.value = next;
+        })
+        .onEnd((event) => {
+          const maxIndex = Math.max(count - 1, 0);
+          const base = Math.round(startPosition.value);
+          let target = base;
+          if (event.translationY < -itemHeight * SWIPE_DISTANCE_RATIO || event.velocityY < -SWIPE_VELOCITY) {
+            target = base + 1;
+          } else if (event.translationY > itemHeight * SWIPE_DISTANCE_RATIO || event.velocityY > SWIPE_VELOCITY) {
+            target = base - 1;
+          }
+          target = Math.min(Math.max(target, 0), maxIndex);
+
+          position.value = withSpring(target, {
+            damping: 28,
+            stiffness: 260,
+            mass: 1,
+            overshootClamping: true,
+            velocity: -event.velocityY / itemHeight,
+          });
+        }),
+    [count, itemHeight, position, startPosition]
+  );
+
+  // Précharge les miniatures des prochaines vidéos.
   useEffect(() => {
     for (let offset = 1; offset <= PREFETCH_POSTERS; offset += 1) {
       const nextVideo = filteredVideos[safeIndex + offset];
@@ -93,23 +198,11 @@ export default function HomeFeed() {
     }
   }, [filteredVideos, safeIndex]);
 
-
-  const renderItem = useCallback(
-    ({ item, index }: { item: any; index: number }) => (
-      <VideoPost
-        video={item}
-        height={itemHeight}
-        isActive={index === safeIndex && isFocused && appActive}
-        shouldPreload={index === safeIndex + 1 && isFocused && appActive}
-      />
-    ),
-    [safeIndex, isFocused, appActive, itemHeight]
-  );
-
-  const getItemLayout = useCallback(
-    (_: any, index: number) => ({ length: itemHeight, offset: itemHeight * index, index }),
-    [itemHeight]
-  );
+  // Fenêtre de 3 pages montées : précédente, courante, suivante.
+  const windowIndexes: number[] = [];
+  for (let i = Math.max(safeIndex - 1, 0); i <= Math.min(safeIndex + 1, count - 1); i += 1) {
+    windowIndexes.push(i);
+  }
 
   return (
     <View className="flex-1 bg-black" onLayout={handleFeedLayout}>
@@ -121,16 +214,6 @@ export default function HomeFeed() {
       >
         <Tv size={12} color="#ffffff" />
         <Text className="text-white text-[9px] font-extrabold tracking-widest uppercase ml-1">LIVE</Text>
-      </TouchableOpacity>
-
-      <TouchableOpacity
-        onPress={() => router.push('/privacy')}
-        className="absolute top-12 right-4 z-20 flex-row items-center rounded-full bg-black/50 px-2.5 py-1"
-        accessibilityRole="button"
-        accessibilityLabel="Informations de confidentialité"
-      >
-        <Shield size={13} color="#a1a1aa" />
-        <Text className="text-zinc-400 text-[9px] ml-1">Confidentialité</Text>
       </TouchableOpacity>
 
       <View className="absolute top-12 left-0 right-0 z-10 flex-row justify-center items-center gap-x-6" pointerEvents="box-none">
@@ -163,7 +246,7 @@ export default function HomeFeed() {
             </View>
           </View>
         </View>
-      ) : filteredVideos.length === 0 ? (
+      ) : count === 0 ? (
         <View className="flex-1 justify-center items-center bg-black px-8">
           {feedType === 'following' ? (
             <View className="items-center">
@@ -191,29 +274,23 @@ export default function HomeFeed() {
           )}
         </View>
       ) : (
-        <FlatList
-          ref={listRef}
-          data={filteredVideos}
-          keyExtractor={(item) => item.id}
-          renderItem={renderItem}
-          extraData={`${safeIndex}-${isFocused}-${appActive}-${itemHeight}`}
-          showsVerticalScrollIndicator={false}
-          onScroll={onScroll}
-          scrollEventThrottle={16}
-          snapToInterval={itemHeight}
-          snapToAlignment="start"
-          disableIntervalMomentum
-          decelerationRate="fast"
-          initialNumToRender={2}
-          maxToRenderPerBatch={2}
-          updateCellsBatchingPeriod={30}
-          windowSize={5}
-          // removeClippedSubviews provoque des Ã©crans noirs avec les vidÃ©os sur Android.
-          removeClippedSubviews={false}
-          getItemLayout={getItemLayout}
-          overScrollMode="never"
-          bounces={false}
-        />
+        <GestureDetector gesture={panGesture}>
+          <Animated.View style={{ flex: 1, overflow: 'hidden' }} collapsable={false}>
+            {windowIndexes.map((index) => {
+              const video = filteredVideos[index];
+              return (
+                <PagerItem key={video.id} index={index} position={position} height={itemHeight}>
+                  <VideoPost
+                    video={video}
+                    height={itemHeight}
+                    isActive={index === safeIndex && isFocused && appActive}
+                    shouldPreload={index === safeIndex + 1 && isFocused && appActive}
+                  />
+                </PagerItem>
+              );
+            })}
+          </Animated.View>
+        </GestureDetector>
       )}
 
       <LiveStreamModal isVisible={showLive} onClose={() => setShowLive(false)} />

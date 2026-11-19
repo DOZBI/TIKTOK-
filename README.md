@@ -97,7 +97,7 @@ Les visiteurs peuvent regarder les vidéos publiques sans compte. Les vues sont 
 
 Pour activer l’administration et les statistiques après déploiement :
 
-1. Exécutez `supabase/migrations/0004_admin_analytics.sql` dans le SQL Editor du projet Supabase.
+1. Exécutez `supabase/migrations/0004_admin_analytics.sql`, puis `supabase/migrations/0005_restore_delete_cascades.sql` dans le SQL Editor du projet Supabase. La migration 0005 aligne les clés étrangères d’un schéma existant afin que la suppression admin des utilisateurs et vidéos fonctionne aussi sur les anciens projets.
 2. Connectez-vous au compte qui doit être administrateur, puis copiez son UUID depuis **Supabase > Authentication > Users**.
 3. Dans les variables Netlify, avec la portée **Functions**, définissez `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY` (ou `SUPABASE_SECRET_KEY`), `ADMIN_USER_IDS` et `VISITOR_HASH_SECRET`. `ADMIN_USER_IDS` accepte un ou plusieurs UUID séparés par des virgules. Utilisez une valeur aléatoire longue pour le secret HMAC.
 4. Redéployez le site, connectez-vous avec le compte autorisé et ouvrez `/admin`.

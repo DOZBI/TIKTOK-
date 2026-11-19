@@ -372,7 +372,7 @@ function VideoPost({ video, isActive, height }: VideoPostItemProps) {
             <Image source={{ uri: poster }} style={StyleSheet.absoluteFill} resizeMode="cover" />
           ) : null}
 
-          <GestureDetector gesture={composedGesture}>
+          <GestureDetector gesture={composedGesture} touchAction="pan-y">
             <Pressable
               style={StyleSheet.absoluteFill}
               onLongPress={handleLongPress}

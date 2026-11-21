@@ -1,4 +1,3 @@
-
 import React, {
   useState,
   useRef,
@@ -47,15 +46,22 @@ export default function HomeFeed() {
 
   const { height: windowHeight } = useWindowDimensions();
 
-  // Dimensions du feed.
-  const [feedHeight, setFeedHeight] = useState(0);
-
+  // Hauteur de repli fiable dès le premier rendu.
   const fallbackItemHeight = Math.max(
     windowHeight - TAB_BAR_HEIGHT,
     1
   );
 
-  const itemHeight = feedHeight || fallbackItemHeight;
+  // Dimensions du feed (initialisées directement pour éviter un saut à 0).
+  const [feedHeight, setFeedHeight] = useState<number>(fallbackItemHeight);
+
+  useEffect(() => {
+    setFeedHeight((current) =>
+      current > 0 ? current : fallbackItemHeight
+    );
+  }, [fallbackItemHeight]);
+
+  const itemHeight = feedHeight > 0 ? feedHeight : fallbackItemHeight;
 
   const handleFeedLayout = useCallback(
     (event: LayoutChangeEvent) => {
@@ -65,7 +71,7 @@ export default function HomeFeed() {
 
       if (nextHeight > 0) {
         setFeedHeight((current) =>
-          current === nextHeight ? current : nextHeight
+          Math.abs(current - nextHeight) > 1 ? nextHeight : current
         );
       }
     },
@@ -209,26 +215,22 @@ export default function HomeFeed() {
   const renderItem = useCallback(
     ({ item, index }: { item: any; index: number }) => {
       const isCurrentVideo = index === safeIndex;
-
-      const shouldPreload =
-        index === safeIndex + 1;
+      const shouldPreload = index === safeIndex + 1;
+      const isVideoActive =
+        isCurrentVideo && isFocused && appActive && !showLive;
 
       return (
         <View style={{ height: itemHeight }}>
           <VideoPost
             video={item}
             height={itemHeight}
-            isActive={
-              isCurrentVideo &&
-              isFocused &&
-              appActive
-            }
+            isActive={isVideoActive}
             shouldPreload={shouldPreload}
           />
         </View>
       );
     },
-    [safeIndex, isFocused, appActive, itemHeight]
+    [safeIndex, isFocused, appActive, showLive, itemHeight]
   );
 
   // Dimensions optimisées de chaque élément.
@@ -392,7 +394,7 @@ export default function HomeFeed() {
           keyExtractor={keyExtractor}
           renderItem={renderItem}
 
-          extraData={`${safeIndex}-${isFocused}-${appActive}-${itemHeight}`}
+          extraData={`${safeIndex}-${isFocused}-${appActive}-${showLive}-${itemHeight}`}
 
           // Défilement vertical.
           vertical

@@ -1,4 +1,3 @@
-
 import React, {
   useState,
   useRef,
@@ -29,7 +28,7 @@ import VideoPost from '../../components/VideoPost';
 import LiveStreamModal from '../../components/LiveStreamModal';
 import { pauseAll } from '../../lib/playbackManager';
 
-import { Users, Sparkles, Tv } from 'lucide-react-native';
+import { Users, Sparkles, Tv, Compass } from 'lucide-react-native';
 
 const TAB_BAR_HEIGHT = 60;
 
@@ -249,7 +248,7 @@ export default function HomeFeed() {
 
   return (
     <View
-      className="flex-1 bg-black"
+      className="flex-1 bg-zinc-950"
       onLayout={handleFeedLayout}
     >
       <StatusBar
@@ -257,127 +256,144 @@ export default function HomeFeed() {
         translucent
       />
 
-      {/* Bouton LIVE */}
+      {/* Bouton LIVE modernisé */}
       <TouchableOpacity
         onPress={() => setShowLive(true)}
-        activeOpacity={0.8}
-        className="absolute top-12 left-4 z-20 bg-red-600 border border-red-500 px-2.5 py-1 rounded-full flex-row items-center"
+        activeOpacity={0.85}
+        className="absolute top-12 left-4 z-20 bg-rose-600/95 border border-rose-400/40 px-3 py-1.5 rounded-full flex-row items-center"
       >
+        <View className="w-2 h-2 rounded-full bg-white mr-1.5" />
         <Tv size={12} color="#ffffff" />
-
-        <Text className="text-white text-[9px] font-extrabold tracking-widest uppercase ml-1">
+        <Text className="text-white text-[10px] font-black tracking-widest uppercase ml-1">
           LIVE
         </Text>
       </TouchableOpacity>
 
-      {/* Navigation du feed */}
+      {/* Navigation du feed en capsule flottante */}
       <View
-        className="absolute top-12 left-0 right-0 z-10 flex-row justify-center items-center gap-x-6"
+        className="absolute top-12 left-0 right-0 z-10 flex-row justify-center items-center"
         pointerEvents="box-none"
       >
-        <TouchableOpacity
-          onPress={() => setFeedType('following')}
-          activeOpacity={0.8}
-          className="items-center py-1"
-        >
-          <Text
-            className={`text-sm font-bold ${
-              feedType === 'following'
-                ? 'text-white text-[15px]'
-                : 'text-zinc-400'
+        <View className="flex-row items-center bg-black/55 border border-white/15 rounded-full p-1">
+          <TouchableOpacity
+            onPress={() => setFeedType('following')}
+            activeOpacity={0.85}
+            className={`px-3.5 py-1 rounded-full ${
+              feedType === 'following' ? 'bg-white' : 'bg-transparent'
             }`}
           >
-            Following
-          </Text>
+            <Text
+              className={`text-xs font-extrabold ${
+                feedType === 'following'
+                  ? 'text-zinc-950'
+                  : 'text-zinc-300'
+              }`}
+            >
+              Abonnements
+            </Text>
+          </TouchableOpacity>
 
-          {feedType === 'following' && (
-            <View className="w-6 h-0.5 bg-white rounded-full mt-1" />
-          )}
-        </TouchableOpacity>
-
-        <TouchableOpacity
-          onPress={() => setFeedType('foryou')}
-          activeOpacity={0.8}
-          className="items-center py-1"
-        >
-          <Text
-            className={`text-sm font-bold ${
-              feedType === 'foryou'
-                ? 'text-white text-[15px]'
-                : 'text-zinc-400'
+          <TouchableOpacity
+            onPress={() => setFeedType('foryou')}
+            activeOpacity={0.85}
+            className={`px-3.5 py-1 rounded-full ${
+              feedType === 'foryou' ? 'bg-rose-500' : 'bg-transparent'
             }`}
           >
-            For You
-          </Text>
-
-          {feedType === 'foryou' && (
-            <View className="w-6 h-0.5 bg-white rounded-full mt-1" />
-          )}
-        </TouchableOpacity>
+            <Text
+              className={`text-xs font-extrabold ${
+                feedType === 'foryou'
+                  ? 'text-white'
+                  : 'text-zinc-300'
+              }`}
+            >
+              Pour toi
+            </Text>
+          </TouchableOpacity>
+        </View>
       </View>
+
+      {/* Badge discret de position dans le flux */}
+      {!isFeedLoading && filteredVideos.length > 0 && (
+        <View
+          pointerEvents="none"
+          className="absolute right-3 top-24 z-10 bg-black/45 border border-white/10 px-2 py-1 rounded-full"
+        >
+          <Text className="text-zinc-200 text-[10px] font-bold">
+            {safeIndex + 1} / {filteredVideos.length}
+          </Text>
+        </View>
+      )}
 
       {/* Chargement */}
       {isFeedLoading ? (
-        <View className="flex-1 items-center justify-center bg-black px-8">
-          <View className="w-full h-[68%] rounded-2xl bg-zinc-900 overflow-hidden border border-zinc-800">
-            <View className="flex-1 bg-zinc-800/80 items-center justify-center">
-              <ActivityIndicator
-                size="large"
-                color="#ff0050"
-              />
+        <View className="flex-1 items-center justify-center bg-zinc-950 px-6">
+          <View className="w-full h-[70%] rounded-3xl bg-zinc-900 overflow-hidden border border-white/10 relative">
+            <View className="w-44 h-44 rounded-full bg-rose-500/15 absolute -top-12 -right-12" />
+            <View className="flex-1 bg-zinc-900/80 items-center justify-center px-6">
+              <View className="w-14 h-14 rounded-2xl bg-rose-500/15 border border-rose-500/30 items-center justify-center">
+                <ActivityIndicator
+                  size="large"
+                  color="#f43f5e"
+                />
+              </View>
 
-              <Text className="text-zinc-300 text-xs font-semibold mt-4">
-                Préparation de la vidéo…
+              <Text className="text-white text-sm font-extrabold mt-4">
+                Préparation du flux vidéo
+              </Text>
+              <Text className="text-zinc-400 text-xs mt-1 text-center">
+                Optimisation des clips et des miniatures…
               </Text>
             </View>
 
-            <View className="p-4 gap-y-3">
-              <View className="w-32 h-3 rounded-full bg-zinc-700" />
-              <View className="w-4/5 h-3 rounded-full bg-zinc-800" />
-              <View className="w-1/2 h-3 rounded-full bg-zinc-800" />
+            <View className="p-4 bg-zinc-950/70 border-t border-white/5 gap-y-2.5">
+              <View className="w-28 h-3 rounded-full bg-zinc-800" />
+              <View className="w-4/5 h-2.5 rounded-full bg-zinc-800/80" />
+              <View className="w-1/2 h-2.5 rounded-full bg-zinc-800/60" />
             </View>
           </View>
         </View>
       ) : filteredVideos.length === 0 ? (
 
         /* Aucun contenu */
-        <View className="flex-1 justify-center items-center bg-black px-8">
+        <View className="flex-1 justify-center items-center bg-zinc-950 px-8">
           {feedType === 'following' ? (
-            <View className="items-center">
-              <View className="bg-zinc-900 p-5 rounded-full mb-4 border border-zinc-800">
-                <Users size={36} color="#888888" />
+            <View className="items-center bg-zinc-900/70 border border-zinc-800 rounded-3xl p-7 w-full">
+              <View className="bg-rose-500/15 border border-rose-500/30 p-4 rounded-2xl mb-4">
+                <Users size={30} color="#f43f5e" />
               </View>
 
-              <Text className="text-white text-base font-extrabold text-center mb-2">
-                Follow creators to see their videos
+              <Text className="text-white text-base font-black text-center mb-2">
+                Aucun abonnement pour l'instant
               </Text>
 
-              <Text className="text-zinc-500 text-xs text-center leading-5 mb-6">
-                Trending videos from creators you follow will appear here. Go to the "For You" tab to find creators.
+              <Text className="text-zinc-400 text-xs text-center leading-5 mb-6">
+                Les clips des créateurs que tu suis apparaîtront ici. Explore l'onglet « Pour toi » pour découvrir de nouveaux comptes.
               </Text>
 
               <TouchableOpacity
                 onPress={() => setFeedType('foryou')}
-                activeOpacity={0.8}
-                className="bg-[#ff0050] px-6 py-3 rounded-full"
+                activeOpacity={0.85}
+                className="bg-rose-500 px-6 py-3 rounded-2xl flex-row items-center"
               >
-                <Text className="text-white font-extrabold text-sm">
-                  Explore For You
+                <Compass size={15} color="#ffffff" />
+                <Text className="text-white font-extrabold text-xs ml-2">
+                  Découvrir « Pour toi »
                 </Text>
               </TouchableOpacity>
             </View>
           ) : (
-            <View className="items-center">
-              <View className="bg-zinc-900 p-5 rounded-full mb-4 border border-zinc-800">
-                <Sparkles size={36} color="#888888" />
+            <View className="items-center bg-zinc-900/70 border border-zinc-800 rounded-3xl p-7 w-full">
+              <View className="bg-zinc-800 p-4 rounded-2xl mb-4">
+                <Sparkles size={30} color="#a1a1aa" />
               </View>
 
-              <Text className="text-white text-base font-extrabold text-center mb-2">
-                No videos available
+              <Text className="text-white text-base font-black text-center mb-2">
+                Aucune vidéo disponible
               </Text>
 
-              <Text className="text-zinc-500 text-xs text-center">
-                Check back later or upload a new creation!
+              <Text className="text-zinc-400 text-xs text-center leading-5">
+                Reviens un peu plus tard ou publie une nouvelle vidéo pour animer le flux.
               </Text>
             </View>
           )}
